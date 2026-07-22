@@ -1,0 +1,24 @@
+{
+  "name": "Pescadería Rana - Trazabilidad y Facturación",
+  "short_name": "PescaderíaRana",
+  "description": "Sistema de trazabilidad pesquera, facturación y escaneo OCR de papeletas para Pescadería Rana",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0d5c75",
+  "theme_color": "#0d5c75",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

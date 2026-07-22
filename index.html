@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pescadería Rana - Trazabilidad y Facturación</title>
+  
+  <!-- PWA & Mobile Web App Settings -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d5c75">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pescadería Rana">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+  <!-- Google Fonts & Font Awesome Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Estilos principales -->
+  <link rel="stylesheet" href="css/styles.css">
+  
+  <!-- Tesseract.js (Local OCR Client-side) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- html2pdf.js for direct PDF download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Sidebar / Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <i class="fa-solid fa-fish-fins"></i>
+        </div>
+        <div class="brand-info">
+          <h2>PESCADERÍA RANA</h2>
+          <span>Sistema de Trazabilidad</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-btn active" data-tab="invoice-builder">
+          <i class="fa-solid fa-file-invoice-dollar"></i>
+          <span>Crear Factura</span>
+        </button>
+        <button class="nav-btn" data-tab="ocr-scanner">
+          <i class="fa-solid fa-camera"></i>
+          <span>Escáner Avanzado Papeletas</span>
+        </button>
+        <button class="nav-btn" data-tab="clients-manager">
+          <i class="fa-solid fa-address-book"></i>
+          <span>Agenda Clientes</span>
+        </button>
+        <button class="nav-btn" data-tab="invoices-history">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>Registro Facturas</span>
+        </button>
+        <button class="nav-btn" data-tab="settings">
+          <i class="fa-solid fa-gear"></i>
+          <span>Configuración</span>
+        </button>
+      </nav>
+
+      <div class="mobile-device-info">
+        <i class="fa-solid fa-cloud"></i>
+        <span>Acceso en la Nube PWA</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Mobile Header -->
+      <header class="mobile-header">
+        <div class="mobile-brand">
+          <i class="fa-solid fa-fish-fins"></i>
+          <h1>PESCADERÍA RANA</h1>
+        </div>
+        <button id="mobile-menu-toggle" class="icon-btn">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+      </header>
+
+      <!-- TAB 1: CREAR FACTURA -->
+      <section id="invoice-builder" class="tab-content active">
+        <div class="section-header">
+          <div>
+            <h1>Facturador & Trazabilidad</h1>
+            <p>Diseña y emite facturas en el formato oficial de Pescadería Rana</p>
+          </div>
+          <div class="header-actions">
+            <button id="btn-save-invoice" class="btn btn-primary">
+              <i class="fa-solid fa-floppy-disk"></i> Guardar Factura
+            </button>
+            <button id="btn-print-invoice" class="btn btn-success">
+              <i class="fa-solid fa-print"></i> Imprimir / PDF
+            </button>
+          </div>
+        </div>
+
+        <div class="builder-grid">
+          <!-- Form Control Box -->
+          <div class="card form-card">
+            <h3><i class="fa-solid fa-pen-to-square"></i> Datos de la Factura</h3>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label for="inv-number">Nº Factura</label>
+                <input type="text" id="inv-number" class="form-input" placeholder="Ej: 104">
+              </div>
+              <div class="form-group">
+                <label for="inv-date">Fecha</label>
+                <input type="date" id="inv-date" class="form-input">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="inv-client-select">Seleccionar Cliente de la Agenda</label>
+              <div class="input-with-button">
+                <select id="inv-client-select" class="form-input">
+                  <option value="">-- Seleccionar de Agenda --</option>
+                </select>
+                <button id="btn-quick-add-client" class="btn btn-secondary" title="Nuevo Cliente">
+                  <i class="fa-solid fa-user-plus"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="inv-client-name">Nombre Cliente</label>
+                <input type="text" id="inv-client-name" class="form-input" placeholder="Nombre o Razón Social">
+              </div>
+              <div class="form-group">
+                <label for="inv-client-cif">CIF / NIF</label>
+                <input type="text" id="inv-client-cif" class="form-input" placeholder="CIF del cliente">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="inv-client-address">Dirección</label>
+                <input type="text" id="inv-client-address" class="form-input" placeholder="Dirección">
+              </div>
+              <div class="form-group">
+                <label for="inv-client-province">Provincia</label>
+                <input type="text" id="inv-client-province" class="form-input" value="Málaga">
+              </div>
+            </div>
+
+            <hr class="divider">
+
+            <!-- PANEL DE INTERFAZ DE PRODUCTOS AÑADIDOS -->
+            <div class="active-items-panel">
+              <div class="panel-header">
+                <h4><i class="fa-solid fa-cart-shopping"></i> Productos Añadidos a la Factura (<span id="active-items-count">0</span>)</h4>
+                <button id="btn-clear-active-items" class="btn btn-secondary btn-sm text-danger" title="Vaciar productos">
+                  <i class="fa-solid fa-trash-can"></i> Vaciar Lista
+                </button>
+              </div>
+              <div id="active-items-list-container" class="active-items-list">
+                <!-- Lista interactiva de productos con botón de eliminar -->
+              </div>
+            </div>
+
+            <div class="section-title-with-badge margin-top-md">
+              <h3><i class="fa-solid fa-fish"></i> Añadir Pescado</h3>
+            </div>
+
+            <!-- ESCÁNER DIRECTO DE PAPELETA -->
+            <div class="direct-scan-banner">
+              <div class="scan-banner-info">
+                <i class="fa-solid fa-camera"></i>
+                <div>
+                  <strong>Escanear Papeleta con OCR e IA</strong>
+                  <p>Captura el número de lote, producto, kilos y precio automáticamente</p>
+                </div>
+              </div>
+              <div class="scan-banner-actions">
+                <label for="direct-camera-file-input" class="btn btn-primary btn-sm">
+                  <i class="fa-solid fa-camera-retro"></i> Capturar Foto Papeleta
+                  <input type="file" id="direct-camera-file-input" accept="image/*" capture="environment" style="display:none;">
+                </label>
+              </div>
+            </div>
+
+            <div id="direct-scan-loading" class="loading-spinner hidden">
+              <div class="spinner"></div>
+              <p id="direct-scan-status">Leyendo número de lote y datos de la papeleta...</p>
+            </div>
+
+            <div class="add-item-box margin-top-sm">
+              <div class="form-row">
+                <div class="form-group flex-2">
+                  <label for="item-concept">Concepto / Especie de Pescado</label>
+                  <input type="text" id="item-concept" class="form-input" placeholder="Ej: Merluza fresca, Gamba blanca">
+                </div>
+                <div class="form-group flex-1">
+                  <label for="item-lote"><i class="fa-solid fa-barcode"></i> N° Lote</label>
+                  <input type="text" id="item-lote" class="form-input" placeholder="Ej: L-2026-88">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="item-qty">Cantidad (Kg/Cajas)</label>
+                  <input type="number" step="0.01" id="item-qty" class="form-input" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                  <label for="item-price">Precio/Kg (€)</label>
+                  <input type="number" step="0.01" id="item-price" class="form-input" placeholder="0.00">
+                </div>
+                <div class="form-group align-end">
+                  <button id="btn-add-item" class="btn btn-primary full-width">
+                    <i class="fa-solid fa-cart-plus"></i> Añadir Producto
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Document Live Preview (Exact Layout with Separate Lote Column & No Actions Column) -->
+          <div class="card preview-card">
+            <div class="preview-toolbar">
+              <span><i class="fa-solid fa-eye"></i> Formato Oficial Pescadería Rana</span>
+            </div>
+
+            <div id="invoice-print-container">
+              <div id="invoice-print-area" class="invoice-document">
+                <!-- Header Section -->
+                <div class="invoice-header">
+                  <div class="company-block">
+                    <h2 class="company-title">PESCADERÍA RANA</h2>
+                    <p class="company-owner">José Luis Domínguez Díaz</p>
+                    <p class="company-nif">N. I. F.: 77 472 441 - T</p>
+                    <p class="company-address">Avda. Andalucia, local Nº 2 -</p>
+                    <p class="company-pc">29750 Algarrobo Costa</p>
+                    <p class="company-city">(Málaga)</p>
+                    <p class="company-phone">Telf.: 692 216 951</p>
+                  </div>
+
+                  <div class="meta-block">
+                    <div class="meta-row">
+                      <p><strong>Nº factura:</strong> <span id="pv-inv-number"></span></p>
+                      <p class="meta-date"><strong>Fecha:</strong> <span id="pv-inv-date"></span></p>
+                    </div>
+                    <div class="client-info-box">
+                      <p><strong>Cliente:</strong> <span id="pv-client-name"></span></p>
+                      <p><strong>CIF:</strong> <span id="pv-client-cif"></span></p>
+                      <p><strong>Dirección:</strong> <span id="pv-client-address"></span></p>
+                      <p><strong>Provincia:</strong> <span id="pv-client-province">Málaga</span></p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Invoice Table with SEPARATE LOTE Column and NO Action buttons -->
+                <div class="invoice-table-wrapper">
+                  <table class="invoice-table">
+                    <thead>
+                      <tr>
+                        <th class="col-qty">Cantidad</th>
+                        <th class="col-concept">Concepto</th>
+                        <th class="col-lote">Lote</th>
+                        <th class="col-price">Precio/Kg</th>
+                        <th class="col-subtotal">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody id="pv-items-body">
+                      <!-- Dynamic rows: Cantidad | Concepto | Lote | Precio/Kg | Subtotal -->
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Total Block -->
+                <div class="invoice-footer">
+                  <div class="total-block">
+                    <span class="total-label">TOTAL</span>
+                    <div class="total-border-box">
+                      <span id="pv-total-factura"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: ESCÁNER PAPELETA OCR / IA -->
+      <section id="ocr-scanner" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h1>Escáner Avanzado de Papeletas</h1>
+            <p>Escaneo masivo y revisión detallada de papeletas de lonja</p>
+          </div>
+        </div>
+
+        <div class="scanner-grid">
+          <div class="card scanner-input-card">
+            <h3><i class="fa-solid fa-camera"></i> Escanear con Cámara / Foto</h3>
+            
+            <div class="scanner-controls">
+              <label for="camera-file-input" class="btn btn-lg btn-primary drop-zone">
+                <i class="fa-solid fa-camera-retro"></i>
+                <span>Tomar Foto / Subir Papeleta</span>
+                <input type="file" id="camera-file-input" accept="image/*" capture="environment">
+              </label>
+
+              <button id="btn-start-camera" class="btn btn-secondary full-width margin-top-sm">
+                <i class="fa-solid fa-video"></i> Abrir Cámara en Directo
+              </button>
+            </div>
+
+            <div id="live-camera-container" class="live-camera-box hidden">
+              <video id="camera-video" autoplay playsinline></video>
+              <div class="camera-actions">
+                <button id="btn-capture-frame" class="btn btn-success">
+                  <i class="fa-solid fa-circle"></i> Capturar Foto
+                </button>
+                <button id="btn-stop-camera" class="btn btn-danger">
+                  <i class="fa-solid fa-xmark"></i> Cerrar
+                </button>
+              </div>
+            </div>
+
+            <!-- Image Preview -->
+            <div id="scanner-preview-container" class="preview-image-box hidden">
+              <img id="scanned-image-preview" src="" alt="Papeleta escaneada">
+            </div>
+
+            <!-- OCR Engine Selector -->
+            <div class="form-group margin-top-md">
+              <label><i class="fa-solid fa-brain"></i> Motor Inteligente de Lectura</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="ocr-engine" value="gemini" checked>
+                  <span>Agente IA Vision (Reconocimiento de Lote y Trazabilidad)</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="ocr-engine" value="tesseract">
+                  <span>OCR Local Sin Conexión (Tesseract)</span>
+                </label>
+              </div>
+            </div>
+
+            <button id="btn-process-ocr" class="btn btn-success full-width margin-top-md" disabled>
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Analizar Papeleta
+            </button>
+            
+            <div id="ocr-loading" class="loading-spinner hidden">
+              <div class="spinner"></div>
+              <p id="ocr-status-text">Analizando número de lote y datos de la papeleta...</p>
+            </div>
+          </div>
+
+          <!-- Scanner Results Card -->
+          <div class="card scanner-results-card">
+            <h3><i class="fa-solid fa-list-check"></i> Filas y Lotes Detectados</h3>
+            <p class="help-text">Verifica o modifica el Lote y datos extraídos antes de meterlos a la factura:</p>
+
+            <div id="detected-items-list" class="detected-list">
+              <div class="empty-state">
+                <i class="fa-solid fa-receipt"></i>
+                <p>Captura una foto de tu papeleta para extraer el N° de Lote, concepto, kilos y precio automáticamente.</p>
+              </div>
+            </div>
+
+            <div id="detected-actions" class="detected-actions-bar hidden">
+              <button id="btn-add-scanned-to-invoice" class="btn btn-primary full-width">
+                <i class="fa-solid fa-file-export"></i> Insertar Ítems en la Factura Actual
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: AGENDA DE CLIENTES -->
+      <section id="clients-manager" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h1>Agenda de Clientes</h1>
+            <p>Gestiona tus clientes y asígnalos directamente a la factura en 1 clic</p>
+          </div>
+          <button id="btn-open-client-modal" class="btn btn-primary">
+            <i class="fa-solid fa-user-plus"></i> Nuevo Cliente
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="table-search-bar">
+            <div class="search-input-box">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input type="text" id="client-search-input" placeholder="Buscar cliente por nombre, CIF o teléfono...">
+            </div>
+          </div>
+
+          <div class="responsive-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nombre / Razón Social</th>
+                  <th>CIF / NIF</th>
+                  <th>Dirección</th>
+                  <th>Provincia</th>
+                  <th>Teléfono</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="clients-table-body">
+                <!-- Dynamic client list -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: REGISTRO DE FACTURAS -->
+      <section id="invoices-history" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h1>Registro e Historial de Facturas</h1>
+            <p>Facturas emitidas y guardadas. Puedes editarlas, imprimirlas o borrarlas.</p>
+          </div>
+          <div class="header-actions">
+            <button id="btn-export-backup" class="btn btn-secondary">
+              <i class="fa-solid fa-download"></i> Guardar Copia de Seguridad
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-search-bar">
+            <div class="search-input-box">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input type="text" id="invoice-search-input" placeholder="Buscar por N° factura, cliente o fecha...">
+            </div>
+          </div>
+
+          <div class="responsive-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nº Factura</th>
+                  <th>Fecha</th>
+                  <th>Cliente</th>
+                  <th>CIF</th>
+                  <th>Total</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="invoices-table-body">
+                <!-- Dynamic invoices list -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: CONFIGURACIÓN -->
+      <section id="settings" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h1>Configuración</h1>
+            <p>Datos del emisor Pescadería Rana y clave IA para escaneo</p>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="card">
+            <h3><i class="fa-solid fa-store"></i> Datos Emisor (Pescadería Rana)</h3>
+            <div class="form-group">
+              <label>Nombre Comercial</label>
+              <input type="text" id="cfg-company-name" class="form-input" value="PESCADERÍA RANA">
+            </div>
+            <div class="form-group">
+              <label>Titular</label>
+              <input type="text" id="cfg-owner" class="form-input" value="José Luis Domínguez Díaz">
+            </div>
+            <div class="form-group">
+              <label>N. I. F.</label>
+              <input type="text" id="cfg-nif" class="form-input" value="77 472 441 - T">
+            </div>
+            <div class="form-group">
+              <label>Dirección</label>
+              <input type="text" id="cfg-address" class="form-input" value="Avda. Andalucia, local Nº 2 - 29750 Algarrobo Costa">
+            </div>
+            <div class="form-group">
+              <label>Teléfono</label>
+              <input type="text" id="cfg-phone" class="form-input" value="692 216 951">
+            </div>
+            <button id="btn-save-company-cfg" class="btn btn-primary margin-top-md">
+              <i class="fa-solid fa-floppy-disk"></i> Guardar Datos Emisor
+            </button>
+          </div>
+
+          <div class="card">
+            <h3><i class="fa-solid fa-key"></i> Clave API Agente IA (Gemini Vision)</h3>
+            <p class="help-text">Ingresa tu clave de Gemini API para escaneo inteligente de número de lote y productos de lonja.</p>
+            <div class="form-group">
+              <label for="cfg-gemini-key">Gemini API Key</label>
+              <input type="password" id="cfg-gemini-key" class="form-input" placeholder="AIzaSy...">
+            </div>
+            <button id="btn-save-gemini-key" class="btn btn-primary margin-top-md">
+              <i class="fa-solid fa-shield-halved"></i> Guardar Clave API
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL DE CLIENTE -->
+  <div id="client-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-client-title">Añadir Cliente</h3>
+        <button id="btn-close-client-modal" class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-client-id">
+        <div class="form-group">
+          <label for="modal-client-name">Nombre / Razón Social *</label>
+          <input type="text" id="modal-client-name" class="form-input" required placeholder="Ej: Restaurante El Marino">
+        </div>
+        <div class="form-group">
+          <label for="modal-client-cif">CIF / NIF</label>
+          <input type="text" id="modal-client-cif" class="form-input" placeholder="B12345678">
+        </div>
+        <div class="form-group">
+          <label for="modal-client-address">Dirección</label>
+          <input type="text" id="modal-client-address" class="form-input" placeholder="Paseo Marítimo, 14">
+        </div>
+        <div class="form-group">
+          <label for="modal-client-province">Provincia</label>
+          <input type="text" id="modal-client-province" class="form-input" value="Málaga">
+        </div>
+        <div class="form-group">
+          <label for="modal-client-phone">Teléfono</label>
+          <input type="text" id="modal-client-phone" class="form-input" placeholder="600123456">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-client-modal" class="btn btn-secondary">Cancelar</button>
+        <button id="btn-save-client-modal" class="btn btn-primary">Guardar Cliente</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="toast hidden">
+    <i class="fa-solid fa-circle-check" id="toast-icon"></i>
+    <span id="toast-message">Notificación</span>
+  </div>
+
+  <!-- JavaScript Modules -->
+  <script src="js/db.js"></script>
+  <script src="js/ocr.js"></script>
+  <script src="js/clients.js"></script>
+  <script src="js/invoices.js"></script>
+  <script src="js/pdf.js"></script>
+  <script src="js/app.js"></script>
+  
+  <!-- Registrar Service Worker para soporte PWA -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('Service Worker registrado:', reg.scope))
+          .catch(err => console.warn('Error registrando Service Worker:', err));
+      });
+    }
+  </script>
+</body>
+</html>

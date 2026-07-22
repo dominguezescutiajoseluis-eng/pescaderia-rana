@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: pescaderia-rana
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: ""
+    startCommand: python server.py
+    envVars:
+      - key: PORT
+        value: 10000

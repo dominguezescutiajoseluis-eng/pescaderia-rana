@@ -1,0 +1,3 @@
+# Pescadería Rana - Dependencias Python
+# El servidor usa solo la librería estándar de Python, no hay dependencias externas.
+# Este archivo es requerido por Render para reconocer el proyecto como Python.

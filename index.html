@@ -63,6 +63,10 @@
           <i class="fa-solid fa-clock-rotate-left"></i>
           <span>Registro Facturas</span>
         </button>
+        <button class="nav-btn" data-tab="reports-summary">
+          <i class="fa-solid fa-chart-line"></i>
+          <span>Resumen de Ventas</span>
+        </button>
         <button class="nav-btn" data-tab="settings">
           <i class="fa-solid fa-gear"></i>
           <span>Configuración</span>
@@ -462,7 +466,100 @@
         </div>
       </section>
 
-      <!-- TAB 5: CONFIGURACIÓN -->
+      <!-- TAB 5: RESUMEN DE VENTAS Y CÓMPUTO PERIÓDICO -->
+      <section id="reports-summary" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h1>Resumen de Ventas y Cómputo</h1>
+            <p>Estadísticas periódicas de facturación acumulada (Semanal, Mensual, Trimestral, Semestral y Anual)</p>
+          </div>
+        </div>
+
+        <!-- Tarjetas de períodos de tiempo -->
+        <div class="reports-grid">
+          <div class="report-card">
+            <div class="report-icon bg-blue"><i class="fa-solid fa-calendar-week"></i></div>
+            <div class="report-details">
+              <span>Esta Semana</span>
+              <h2 id="report-week-total">0,00 €</h2>
+              <small id="report-week-count">0 facturas</small>
+            </div>
+          </div>
+
+          <div class="report-card">
+            <div class="report-icon bg-green"><i class="fa-solid fa-calendar-days"></i></div>
+            <div class="report-details">
+              <span>Este Mes</span>
+              <h2 id="report-month-total">0,00 €</h2>
+              <small id="report-month-count">0 facturas</small>
+            </div>
+          </div>
+
+          <div class="report-card">
+            <div class="report-icon bg-orange"><i class="fa-solid fa-chart-pie"></i></div>
+            <div class="report-details">
+              <span>Trimestral (3 Meses)</span>
+              <h2 id="report-quarter-total">0,00 €</h2>
+              <small id="report-quarter-count">0 facturas</small>
+            </div>
+          </div>
+
+          <div class="report-card">
+            <div class="report-icon bg-purple"><i class="fa-solid fa-chart-column"></i></div>
+            <div class="report-details">
+              <span>Semestral (6 Meses)</span>
+              <h2 id="report-halfyear-total">0,00 €</h2>
+              <small id="report-halfyear-count">0 facturas</small>
+            </div>
+          </div>
+
+          <div class="report-card">
+            <div class="report-icon bg-teal"><i class="fa-solid fa-chart-area"></i></div>
+            <div class="report-details">
+              <span>Este Año</span>
+              <h2 id="report-year-total">0,00 €</h2>
+              <small id="report-year-count">0 facturas</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filtro personalizado y desglose por cliente -->
+        <div class="card margin-top-md">
+          <h3><i class="fa-solid fa-filter"></i> Desglose de Ventas por Cliente en el Período</h3>
+          
+          <div class="form-row align-end">
+            <div class="form-group flex-2">
+              <label for="report-period-select">Seleccionar Rango de Tiempo</label>
+              <select id="report-period-select" class="form-input">
+                <option value="week">Última Semana (7 días)</option>
+                <option value="month" selected>Este Mes</option>
+                <option value="quarter">Últimos 3 Meses</option>
+                <option value="halfyear">Últimos 6 Meses</option>
+                <option value="year">Este Año</option>
+                <option value="all">Todo el Histórico</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="responsive-table-container margin-top-sm">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>CIF / NIF</th>
+                  <th>Facturas Emitidas</th>
+                  <th>Total Facturado (€)</th>
+                </tr>
+              </thead>
+              <tbody id="report-client-breakdown-body">
+                <!-- Desglose por cliente dinámico -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: CONFIGURACIÓN -->
       <section id="settings" class="tab-content">
         <div class="section-header">
           <div>
@@ -583,6 +680,7 @@
   <script src="js/ocr.js"></script>
   <script src="js/clients.js"></script>
   <script src="js/invoices.js"></script>
+  <script src="js/reports.js"></script>
   <script src="js/pdf.js"></script>
   <script src="js/app.js"></script>
   

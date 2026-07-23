@@ -1,8 +1,8 @@
 /* ==========================================================================
-   PESCADERÍA RANA - SERVICE WORKER PWA CON CACHÉ DE FIREBASE
+   PESCADERÍA RANA - SERVICE WORKER PWA CON CACHÉ DE ARCHIVOS Y MÓDULO DE REPORTES
    ========================================================================== */
 
-const CACHE_NAME = 'pescaderia-rana-v2';
+const CACHE_NAME = 'pescaderia-rana-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const ASSETS = [
   './js/ocr.js',
   './js/clients.js',
   './js/invoices.js',
+  './js/reports.js',
   './js/pdf.js',
   './js/app.js',
   './manifest.json',
@@ -22,7 +23,7 @@ const ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('Caché Pescadería Rana v2 activado');
+      console.log('Caché Pescadería Rana v3 activado');
       return cache.addAll(ASSETS);
     })
   );
@@ -45,7 +46,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones a servicios externos (Firebase Firestore, Gemini API, FontAwesome, Google Fonts)
   if (
     !event.request.url.startsWith(self.location.origin) ||
     event.request.url.includes('firestore.googleapis.com') ||

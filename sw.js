@@ -1,8 +1,8 @@
 /* ==========================================================================
-   PESCADERÍA RANA - SERVICE WORKER PWA
+   PESCADERÍA RANA - SERVICE WORKER PWA CON CACHÉ DE FIREBASE
    ========================================================================== */
 
-const CACHE_NAME = 'pescaderia-rana-v1';
+const CACHE_NAME = 'pescaderia-rana-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -19,18 +19,16 @@ const ASSETS = [
   './assets/apple-touch-icon.png'
 ];
 
-// Instalación del Service Worker
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('Caché Pescadería Rana activado');
+      console.log('Caché Pescadería Rana v2 activado');
       return cache.addAll(ASSETS);
     })
   );
   self.skipWaiting();
 });
 
-// Activación y limpieza de cachés antiguas
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -46,17 +44,19 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Estrategia Network First con fallback a Caché
 self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones a APIs externas (ej. Gemini API)
-  if (!event.request.url.startsWith(self.location.origin)) {
+  // Ignorar peticiones a servicios externos (Firebase Firestore, Gemini API, FontAwesome, Google Fonts)
+  if (
+    !event.request.url.startsWith(self.location.origin) ||
+    event.request.url.includes('firestore.googleapis.com') ||
+    event.request.url.includes('firebase')
+  ) {
     return;
   }
 
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Guardar copia actualizada en caché
         if (response && response.status === 200) {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -66,7 +66,6 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => {
-        // Si no hay conexión a internet, responder con la versión en caché
         return caches.match(event.request);
       })
   );

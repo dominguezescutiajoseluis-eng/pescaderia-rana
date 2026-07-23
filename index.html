@@ -23,6 +23,10 @@
   <!-- Estilos principales -->
   <link rel="stylesheet" href="css/styles.css">
   
+  <!-- Firebase SDK v9+ Modular via Compat scripts -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
   <!-- Tesseract.js (Local OCR Client-side) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <!-- html2pdf.js for direct PDF download -->
@@ -67,7 +71,7 @@
 
       <div class="mobile-device-info">
         <i class="fa-solid fa-cloud"></i>
-        <span>Acceso en la Nube PWA</span>
+        <span id="sync-status-indicator">Modo Nube Activo</span>
       </div>
     </aside>
 
@@ -463,7 +467,7 @@
         <div class="section-header">
           <div>
             <h1>Configuración</h1>
-            <p>Datos del emisor Pescadería Rana y clave IA para escaneo</p>
+            <p>Datos del emisor Pescadería Rana, Sincronización Nube Firebase y clave IA</p>
           </div>
         </div>
 
@@ -492,6 +496,26 @@
             </div>
             <button id="btn-save-company-cfg" class="btn btn-primary margin-top-md">
               <i class="fa-solid fa-floppy-disk"></i> Guardar Datos Emisor
+            </button>
+          </div>
+
+          <div class="card">
+            <h3><i class="fa-solid fa-fire"></i> Sincronización en la Nube (Firebase)</h3>
+            <p class="help-text">Configura tu proyecto de Firebase para sincronizar automáticamente datos entre todos tus móviles y PC, además de permitir trabajo offline.</p>
+            
+            <div class="form-group">
+              <label for="cfg-firebase-config">Configuración JSON de Firebase (firebaseConfig)</label>
+              <textarea id="cfg-firebase-config" class="form-input" rows="6" placeholder='{
+  "apiKey": "...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}'></textarea>
+            </div>
+            <button id="btn-save-firebase-cfg" class="btn btn-primary margin-top-md">
+              <i class="fa-solid fa-cloud-arrow-up"></i> Conectar e Iniciar Sincronización
             </button>
           </div>
 

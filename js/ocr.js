@@ -603,8 +603,35 @@ async function leerLoteConIA(imageBase64) {
  * motor multi-pasada después. Devuelve { lote, fuente, confianza, sueltos }.
  */
 async function leerLoteDePapeleta(imageBase64) {
+  // ORDEN: LOCAL PRIMERO (rápido: las papeletas IMPRESAS se leen en 0,2-0,5 s)
+  // y la IA (lenta, 8-12 s) solo cuando el local duda o no encuentra nada.
+  // Si un día se quiere la IA siempre primero, variable: ocrIAprimero = true.
+  const ocrIAprimero = false;
   const apiKey = await getSetting('gemini_api_key', '');
-  if (apiKey && navigator.onLine) {
+  const hayIA = apiKey && navigator.onLine;
+
+  if (!ocrIAprimero) {
+    const local = await leerLoteLocal(imageBase64);
+    // Solo aceptamos la lectura local sin recurrir a la IA si fue MUY confiada
+    // (impresas nítidas: 88-92%). Con confianza más baja (manuscrito, fotos
+    // regulares) la IA corrige: es lenta pero acierta.
+    if (local.lote && (local.confianza || 0) >= 85 && local.fuenteSinDuda) {
+      return local;
+    }
+    if (hayIA) {
+      try {
+        const r = await leerLoteConIA(imageBase64);
+        if (r.lote) return { lote: r.lote, fuente: 'IA Vision (Gemini)', confianza: null, sueltos: r.sueltos || [] };
+        if (r.sueltos && r.sueltos.length) return { lote: local.lote || '', fuente: local.lote ? 'OCR local (IA no encontró mejor)' : 'IA Vision (Gemini)', confianza: local.confianza || null, sueltos: r.sueltos };
+      } catch (err) {
+        console.warn('IA no disponible:', err.message);
+      }
+    }
+    return local;
+  }
+
+  // (Modo IA primero, por si se activa: igual que la versión anterior)
+  if (hayIA) {
     try {
       const r = await leerLoteConIA(imageBase64);
       if (r.lote) return { lote: r.lote, fuente: 'IA Vision (Gemini)', confianza: null, sueltos: r.sueltos || [] };
@@ -613,7 +640,11 @@ async function leerLoteDePapeleta(imageBase64) {
       console.warn('IA no disponible, usando OCR local:', err.message);
     }
   }
+  return await leerLoteLocal(imageBase64);
+}
 
+/** El motor multi-pasada local (lo que antes era el cuerpo de leerLoteDePapeleta) */
+async function leerLoteLocal(imageBase64) {
   const worker = await getOcrWorker();
   const variantes = await variantesDeImagen(imageBase64);
   const candidatos = [];
@@ -663,7 +694,7 @@ async function leerLoteDePapeleta(imageBase64) {
           await restaurarWorker(worker);
           const crudo = corregirLoteOcr(lote);
           const final = await aplicarAprendizaje(crudo);
-          return { lote: final, crudo, aprendido: final !== crudo, fuente: 'OCR local (' + vari.nombre + ', ' + modo.nombre + ')', pasada: clavePasada, confianza: Math.round(conf), sueltos: [...sueltosGlobal] };
+          return { lote: final, crudo, aprendido: final !== crudo, fuenteSinDuda: !/disperso/.test(clavePasada), fuente: 'OCR local (' + vari.nombre + ', ' + modo.nombre + ')', pasada: clavePasada, confianza: Math.round(conf), sueltos: [...sueltosGlobal] };
         }
       } catch (err) {
         console.warn('OCR ' + vari.nombre + '/' + modo.nombre + ' falló:', err.message);
@@ -684,12 +715,12 @@ async function leerLoteDePapeleta(imageBase64) {
   // Un solo candidato o el primero ganó claramente → rellenarlo
   if (top && (!segundo || top.votos > segundo.votos || top.confianza - segundo.confianza >= 15)) {
     const final = await aplicarAprendizaje(top.lote);
-    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuente: 'OCR local (mejor lectura)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal] };
+    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuenteSinDuda: !/disperso/.test(top.fuente || ''), fuente: 'OCR local (mejor lectura)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal] };
   }
   // Empate/duda → devolver el mejor como principal y el resto como alternativas
   if (top) {
     const final = await aplicarAprendizaje(top.lote);
-    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuente: 'OCR local (¿quisiste decir…?)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal], alternativas: candidatos.slice(1, 5).map(c => c.lote) };
+    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuenteSinDuda: false, fuente: 'OCR local (¿quisiste decir…?)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal], alternativas: candidatos.slice(1, 5).map(c => c.lote) };
   }
   return { lote: '', fuente: 'OCR local', confianza: null, sueltos: [...sueltosGlobal] };
 }
@@ -908,6 +939,7 @@ async function leerYRellenarLote(fileOrBlob) {
       reader.readAsDataURL(fileOrBlob);
     });
 
+    window.__ultimaFotoLote = base64; // por si hay que ofrecer "Releer con IA"
     const res = await leerLoteDePapeleta(base64);
     ocrUltimosCandidatos = [];
     lastOcrResultado = (res && (res.crudo !== undefined || res.lote)) ? { crudo: res.crudo || '', pasada: res.pasada || '' } : null;
@@ -969,7 +1001,34 @@ async function leerYRellenarLote(fileOrBlob) {
         }
         showToast('Lote dudoso: elige una de las lecturas o escríbelo.', 'error');
       } else {
-        if (estado) estado.textContent = 'No se pudo leer el lote. Escríbelo a mano.';
+        if (estado) {
+          estado.innerHTML = '';
+          estado.appendChild(document.createTextNode('No se pudo leer el lote. '));
+          if (navigator.onLine && (await getSetting('gemini_api_key', ''))) {
+            const bIA = document.createElement('button');
+            bIA.type = 'button';
+            bIA.className = 'lote-alt-btn';
+            bIA.textContent = '🤖 Releer con IA';
+            bIA.addEventListener('click', () => {
+              if (!window.__ultimaFotoLote) { showToast('Vuelve a hacer la foto.', 'error'); return; }
+              estado.textContent = 'Releyendo con IA (puede tardar unos segundos)…';
+              leerLoteConIA(window.__ultimaFotoLote).then(r => {
+                if (r.lote) {
+                  const c2 = document.getElementById('item-lote');
+                  if (c2) c2.value = normalizarLote(corregirLoteOcr(r.lote));
+                  showToast('IA: ' + normalizarLote(corregirLoteOcr(r.lote)));
+                  estado.textContent = 'Leído por IA: ' + normalizarLote(corregirLoteOcr(r.lote));
+                } else {
+                  estado.textContent = 'La IA tampoco lo leyó. Escríbelo a mano.';
+                }
+              }).catch(e => { estado.textContent = 'IA no disponible: ' + e.message; });
+            });
+            estado.appendChild(bIA);
+            estado.appendChild(document.createTextNode(' o escríbelo a mano.'));
+          } else {
+            estado.appendChild(document.createTextNode('Escríbelo a mano.'));
+          }
+        }
         showToast('No se detectó ningún nº de lote. Escríbelo a mano.', 'error');
       }
     }

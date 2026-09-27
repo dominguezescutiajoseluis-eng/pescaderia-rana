@@ -21,6 +21,73 @@ let ocrLoteOcupado = false;
 let ocrWorkerPromise = null;
 let ocrUltimosCandidatos = [];   // para los chips «¿quisiste decir…?»
 
+/* ---------- APRENDIZAJE DEL OCR (mejora con el uso) ----------
+   No es una red neuronal: es MEMORIA DE CORRECCIONES, que es lo que de verdad
+   hace que un OCR mejore en un negocio concreto:
+   1. Si el OCR lee «X» y el usuario lo corrige a «Y», se guarda X→Y. La próxima
+      vez que lea X, lo escribe solo como Y.
+   2. Cada pasada (variante+modo) tiene un peso: la que acertó gana peso y la
+      que falló lo pierde, así el consenso se ajusta a TU letra y TU cámara. */
+const CLAVE_APRENDIZAJE = 'ocr_aprendizaje_v1';
+let lastOcrResultado = null; // última lectura OCR, para aprender de las correcciones
+let cacheAprendizaje = null;
+
+async function cargarAprendizaje() {
+  if (cacheAprendizaje) return cacheAprendizaje;
+  try {
+    const v = await getSetting(CLAVE_APRENDIZAJE, null);
+    cacheAprendizaje = (v && typeof v === 'object') ? v : { correcciones: {}, pesoPasadas: {} };
+  } catch (err) {
+    cacheAprendizaje = { correcciones: {}, pesoPasadas: {} };
+  }
+  if (!cacheAprendizaje.correcciones) cacheAprendizaje.correcciones = {};
+  if (!cacheAprendizaje.pesoPasadas) cacheAprendizaje.pesoPasadas = {};
+  return cacheAprendizaje;
+}
+
+async function guardarAprendizaje() {
+  if (!cacheAprendizaje) return;
+  try { await saveSetting(CLAVE_APRENDIZAJE, cacheAprendizaje); } catch (err) { /* sin importancia */ }
+}
+
+/** Clave comparable de un lote: sin mayúsculas, guiones ni espacios */
+function normalClaveLote(v) {
+  return String(v || '').toLowerCase().replace(/[\s\-_#.]/g, '');
+}
+
+/** Devuelve la corrección aprendida para una lectura, si la hay */
+async function aplicarAprendizaje(lote) {
+  if (!lote) return lote;
+  const ap = await cargarAprendizaje();
+  const reg = ap.correcciones[normalClaveLote(lote)];
+  return (reg && reg.a) ? reg.a : lote;
+}
+
+/** El OCR leía «mal» y el usuario lo dejó en «bien»: recordarlo para siempre */
+async function aprenderCorreccion(mal, bien) {
+  const cm = normalClaveLote(mal), cb = normalClaveLote(bien);
+  if (!cm || !cb || cm === cb) return false;
+  const ap = await cargarAprendizaje();
+  ap.correcciones[cm] = { a: String(bien).trim(), t: Date.now() };
+  // Memoria acotada: nos quedamos con las 60 correcciones más recientes
+  const claves = Object.keys(ap.correcciones);
+  if (claves.length > 60) {
+    claves.sort((x, y) => (ap.correcciones[y].t || 0) - (ap.correcciones[x].t || 0));
+    claves.slice(60).forEach(k => delete ap.correcciones[k]);
+  }
+  await guardarAprendizaje();
+  return true;
+}
+
+/** Sube/baja el peso de una pasada concreta según acertó o falló */
+async function reajustarPesoPasada(pasada, delta) {
+  if (!pasada) return;
+  const ap = await cargarAprendizaje();
+  const actual = ap.pesoPasadas[pasada] === undefined ? 1 : ap.pesoPasadas[pasada];
+  ap.pesoPasadas[pasada] = Math.max(0.3, Math.min(2.5, +(actual + delta).toFixed(2)));
+  await guardarAprendizaje();
+}
+
 /** Motor Tesseract local: worker, núcleo WASM y español van en vendor/ */
 function getOcrWorker() {
   if (typeof Tesseract === 'undefined') {
@@ -430,17 +497,19 @@ function pesoVoto(conf) {
   return 1;
 }
 
-/** Añade un candidato evitando duplicados "fuzzys" */
-function pushCandidato(lista, lote, confianza, peso = 1) {
+/** Añade un candidato evitando duplicados "fuzzys" y recordando de qué
+ *  pasada (variante+modo) salió su mejor lectura */
+function pushCandidato(lista, lote, confianza, peso = 1, fuente = '') {
   if (!lote) return;
   const limpio = normalizarLote(corregirLoteOcr(lote));
   if (!limpio || limpio.length < 2 || limpio.length > 20) return;
   const ya = lista.find(c => sonLotesIguales(c.lote, limpio));
   if (ya) {
+    if (fuente && confianza > ya.confianza) ya.fuente = fuente;
     ya.votos += peso;
     ya.confianza = Math.max(ya.confianza, confianza);
   } else {
-    lista.push({ lote: limpio, votos: peso, confianza });
+    lista.push({ lote: limpio, votos: peso, confianza, fuente });
   }
 }
 
@@ -473,6 +542,7 @@ async function leerLoteDePapeleta(imageBase64) {
   const candidatos = [];
   const sueltosGlobal = new Set();
   const pasos = [];
+  const ap = await cargarAprendizaje(); // pesos aprendidos con tu letra/cámara
 
   for (let i = 0; i < variantes.length; i++) {
     const vari = variantes[i];
@@ -485,6 +555,8 @@ async function leerLoteDePapeleta(imageBase64) {
         : [{ psm: '6', nombre: 'bloque' }, { psm: '11', nombre: 'disperso' }];
 
     for (const modo of modos) {
+      const clavePasada = vari.nombre + '/' + modo.nombre;
+      const pesoPasada = (ap.pesoPasadas[clavePasada] !== undefined) ? ap.pesoPasadas[clavePasada] : 1;
       pasos.push(vari.nombre + '·' + modo.nombre);
       try {
         await worker.setParameters({
@@ -496,13 +568,13 @@ async function leerLoteDePapeleta(imageBase64) {
         const texto = result.data.text || '';
         const { lote, sueltos } = extraerLoteDeTexto(texto);
         console.log('OCR ' + vari.nombre + '/' + modo.nombre + ': conf=' + Math.round(conf) + '% lote=' + (lote || '—') + ' sueltos=[' + sueltos.join(', ') + ']');
-        pushCandidato(candidatos, lote, Math.round(conf), pesoVoto(Math.round(conf)));
+        pushCandidato(candidatos, lote, Math.round(conf), pesoVoto(Math.round(conf)) * pesoPasada, clavePasada);
         for (const s of sueltos) {
           if (s.length >= 2) {
             // En un recorte el lote es lo ÚNICO que hay: sus números valen
             // confianza plena; en la foto entera son solo posibles lotes.
             const confS = vari.recorte ? Math.round(conf) : Math.max(0, Math.round(conf) - 20);
-            pushCandidato(candidatos, s, confS, pesoVoto(Math.round(conf)));
+            pushCandidato(candidatos, s, confS, pesoVoto(Math.round(conf)) * pesoPasada, clavePasada);
             sueltosGlobal.add(s);
           }
         }
@@ -510,7 +582,9 @@ async function leerLoteDePapeleta(imageBase64) {
         // Las variantes más preparadas van primero: su lectura manda.
         if (lote && (/[A-Za-z]-\d/.test(lote) || conf >= 50)) {
           await restaurarWorker(worker);
-          return { lote: corregirLoteOcr(lote), fuente: 'OCR local (' + vari.nombre + ', ' + modo.nombre + ')', confianza: Math.round(conf), sueltos: [...sueltosGlobal] };
+          const crudo = corregirLoteOcr(lote);
+          const final = await aplicarAprendizaje(crudo);
+          return { lote: final, crudo, aprendido: final !== crudo, fuente: 'OCR local (' + vari.nombre + ', ' + modo.nombre + ')', pasada: clavePasada, confianza: Math.round(conf), sueltos: [...sueltosGlobal] };
         }
       } catch (err) {
         console.warn('OCR ' + vari.nombre + '/' + modo.nombre + ' falló:', err.message);
@@ -530,13 +604,32 @@ async function leerLoteDePapeleta(imageBase64) {
   const segundo = pool[1];
   // Un solo candidato o el primero ganó claramente → rellenarlo
   if (top && (!segundo || top.votos > segundo.votos || top.confianza - segundo.confianza >= 15)) {
-    return { lote: top.lote, fuente: 'OCR local (mejor lectura)', confianza: top.confianza, sueltos: [...sueltosGlobal] };
+    const final = await aplicarAprendizaje(top.lote);
+    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuente: 'OCR local (mejor lectura)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal] };
   }
   // Empate/duda → devolver el mejor como principal y el resto como alternativas
   if (top) {
-    return { lote: top.lote, fuente: 'OCR local (¿quisiste decir…?)', confianza: top.confianza, sueltos: [...sueltosGlobal], alternativas: candidatos.slice(1, 5).map(c => c.lote) };
+    const final = await aplicarAprendizaje(top.lote);
+    return { lote: final, crudo: top.lote, aprendido: final !== top.lote, fuente: 'OCR local (¿quisiste decir…?)', pasada: top.fuente || '', confianza: top.confianza, sueltos: [...sueltosGlobal], alternativas: candidatos.slice(1, 5).map(c => c.lote) };
   }
   return { lote: '', fuente: 'OCR local', confianza: null, sueltos: [...sueltosGlobal] };
+}
+
+/** Si el usuario, tras un OCR fallido, escribe el lote a mano en el campo,
+ *  se aprende: la lectura cruda del OCR pasa a corregirse sola a lo escrito. */
+async function aprendeOcrDeCampo() {
+  try {
+    if (!lastOcrResultado || !lastOcrResultado.crudo || ocrLoteOcupado) return;
+    const campo = document.getElementById('item-lote');
+    if (!campo) return;
+    const escrito = String(campo.value || '').trim();
+    if (!escrito) return;
+    if (sonLotesIguales(escrito, lastOcrResultado.crudo)) return; // lo dejó igual
+    const aprendido = await aprenderCorreccion(lastOcrResultado.crudo, escrito);
+    if (lastOcrResultado.pasada) await reajustarPesoPasada(lastOcrResultado.pasada, -0.3);
+    if (aprendido) showToast('Anotado: cuando lea "' + lastOcrResultado.crudo + '" escribirá "' + escrito + '".');
+    lastOcrResultado = null;
+  } catch (err) { /* nunca estorbar al usuario */ }
 }
 
 /** Devuelve el worker a su modo por defecto para futuras lecturas */
@@ -577,6 +670,13 @@ function initOcrLote() {
     e.target.value = ''; // permite repetir con el mismo fichero
     if (file) leerYRellenarLote(file);
   });
+
+  // Aprende cuando corriges el lote a mano tras una lectura
+  const campoLote = document.getElementById('item-lote');
+  if (campoLote) {
+    campoLote.addEventListener('change', aprendeOcrDeCampo);
+    campoLote.addEventListener('blur', aprendeOcrDeCampo);
+  }
 
   // Cerrar con la tecla Escape
   document.addEventListener('keydown', (e) => {
@@ -700,6 +800,7 @@ async function leerYRellenarLote(fileOrBlob) {
 
     const res = await leerLoteDePapeleta(base64);
     ocrUltimosCandidatos = [];
+    lastOcrResultado = (res && (res.crudo !== undefined || res.lote)) ? { crudo: res.crudo || '', pasada: res.pasada || '' } : null;
 
     if (res && res.lote) {
       const extra = res.confianza !== null && res.confianza !== undefined ? ' (' + res.confianza + '%)' : '';
@@ -707,7 +808,7 @@ async function leerYRellenarLote(fileOrBlob) {
       ocrUltimosCandidatos = (res.alternativas || []).map(l => ({ lote: l }));
       if (estado) {
         estado.innerHTML = '';
-        estado.appendChild(document.createTextNode('Nº de lote detectado: ' + res.lote + extra + ' — ' + res.fuente));
+        estado.appendChild(document.createTextNode('Nº de lote detectado: ' + res.lote + extra + (res.aprendido ? ' · aplicado lo que corregiste otra vez' : '') + ' — ' + res.fuente));
         if (ocrUltimosCandidatos.length) {
           estado.appendChild(document.createElement('br'));
           estado.appendChild(document.createTextNode('¿No es correcto? Otras lecturas: '));
@@ -716,10 +817,17 @@ async function leerYRellenarLote(fileOrBlob) {
             chip.type = 'button';
             chip.className = 'lote-alt-btn';
             chip.textContent = c.lote;
-            chip.addEventListener('click', () => {
+            chip.addEventListener('click', async () => {
               const campo2 = document.getElementById('item-lote');
               if (campo2) campo2.value = c.lote;
               showToast('Lote corregido a ' + c.lote);
+              // LA APP APRENDE: esa lectura mala → lo que tú has dicho.
+              // La próxima vez que tu letra dé esa lectura, se corregirá sola.
+              if (lastOcrResultado && lastOcrResultado.crudo) {
+                await aprenderCorreccion(lastOcrResultado.crudo, c.lote);
+                if (lastOcrResultado.pasada) await reajustarPesoPasada(lastOcrResultado.pasada, -0.3);
+                showToast('El OCR lo recordará para la próxima vez.');
+              }
             });
             estado.appendChild(chip);
             if (idx < ocrUltimosCandidatos.length - 1) estado.appendChild(document.createTextNode(' '));

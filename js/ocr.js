@@ -116,8 +116,94 @@ async function leerLoteConIA(imageBase64) {
 }
 
 /**
- * Lee la papeleta y devuelve { lote, fuente, confianza }.
- * IA opcional primero (si hay clave y red), OCR local siempre como base.
+ * Corrige confusiones típicas del OCR cuando el lote debe llevar números:
+ * O→0, I/l→1, S→5, B→8, Z→2, g→9, T→7… solo si el patrón del lote es alfanumérico
+ */
+function corregirLoteOcr(valor) {
+  if (!valor) return valor;
+  let v = valor;
+  const etiqueta = v.match(/^(lote|lot|l)[-\s.:#]*/i);
+  const cuerpo = etiqueta ? v.slice(etiqueta[0].length) : v;
+  // Solo "des-confundir" si el cuerpo tiene letras y números mezclados
+  if (/[A-Za-z]/.test(cuerpo) && /\d/.test(cuerpo)) {
+    // Mantener guiones y barras; corregir dentro de cada bloque
+    v = etiqueta[0] + cuerpo.replace(/[A-Za-z0-9]+/g, (bloque) => {
+      if (!/\d/.test(bloque)) return bloque;          // bloque solo letras: deja
+      if (!/[A-Za-z]/.test(bloque)) return bloque;    // bloque solo números: deja
+      return bloque.replace(/O/g, '0').replace(/o/g, '0')
+        .replace(/I/g, '1').replace(/l/g, '1')
+        .replace(/S/g, '5').replace(/B/g, '8')
+        .replace(/Z/g, '2').replace(/g/g, '9')
+        .replace(/T/g, '7').replace(/G/g, '6');
+    });
+  }
+  return v;
+}
+
+/**
+ * Genera variantes de la imagen para maximizar la lectura:
+ * la original preprocesada, el recorte central (donde está el lote en la
+ * guía de la cámara), una binarizada y una invertida.
+ */
+async function variantesDeImagen(imageBase64) {
+  const variantes = [];
+  const base = await preprocesarImagen(imageBase64);
+  variantes.push(base);
+
+  const crearVariante = (img, modo, zoom) => new Promise((resolve) => {
+    try {
+      const c = document.createElement('canvas');
+      const zx = zoom > 1 ? Math.round(img.width * (1 / zoom)) : img.width;
+      const zy = zoom > 1 ? Math.round(img.height * (1 / zoom)) : img.height;
+      const sx = Math.round((img.width - zx) / 2);
+      const sy = Math.round((img.height - zy) / 2);
+      c.width = zoom > 1 ? img.width : img.width;
+      c.height = zoom > 1 ? img.height : img.height;
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, sx, sy, zx, zy, 0, 0, c.width, c.height);
+      const datos = ctx.getImageData(0, 0, c.width, c.height);
+      const p = datos.data;
+      for (let i = 0; i < p.length; i += 4) {
+        const g = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114);
+        let v;
+        if (modo === 'binaria') v = g < 140 ? 0 : 255;
+        else if (modo === 'invertida') v = 255 - g;
+        else v = g;
+        p[i] = p[i + 1] = p[i + 2] = v;
+      }
+      ctx.putImageData(datos, 0, 0);
+      resolve(c.toDataURL('image/jpeg', 0.95));
+    } catch (err) {
+      resolve(null);
+    }
+  });
+
+  try {
+    const img = await cargarImagen(base);
+    const centro = await crearVariante(img, 'normal', 1.8);      // zona central ampliada
+    if (centro) variantes.unshift(centro);
+    const binaria = await crearVariante(img, 'binaria', 1);       // blanco y negro puro
+    if (binaria) variantes.push(binaria);
+    const invertida = await crearVariante(img, 'invertida', 1);   // texto claro sobre oscuro
+    if (invertida) variantes.push(invertida);
+  } catch (err) { /* con la base basta */ }
+
+  return variantes;
+}
+
+function cargarImagen(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+/**
+ * Lee la papeleta con varias pasadas hasta encontrar el lote.
+ * IA opcional primero (si hay clave y red); OCR local con variantes después.
  */
 async function leerLoteDePapeleta(imageBase64) {
   const apiKey = await getSetting('gemini_api_key', '');
@@ -131,12 +217,32 @@ async function leerLoteDePapeleta(imageBase64) {
   }
 
   const worker = await getOcrWorker();
-  const lista = await preprocesarImagen(imageBase64);
-  const result = await worker.recognize(lista);
-  const confianza = (result.data && typeof result.data.confidence === 'number')
-    ? Math.round(result.data.confidence) : null;
-  const lote = extraerLoteDeTexto(result.data.text);
-  return { lote, fuente: 'OCR local', confianza };
+  const variantes = await variantesDeImagen(imageBase64);
+  let mejor = { lote: '', confianza: 0, texto: '' };
+
+  for (let i = 0; i < variantes.length; i++) {
+    try {
+      const result = await worker.recognize(variantes[i]);
+      const conf = (result.data && typeof result.data.confidence === 'number') ? result.data.confidence : 0;
+      const texto = result.data.text || '';
+      const lote = extraerLoteDeTexto(texto);
+      console.log('OCR pasada ' + (i + 1) + ': conf=' + Math.round(conf) + '% lote=' + (lote || '—'));
+      if (lote) {
+        return { lote: corregirLoteOcr(lote), fuente: 'OCR local (pasada ' + (i + 1) + ')', confianza: Math.round(conf) };
+      }
+      if (conf > mejor.confianza) mejor = { lote: '', confianza: conf, texto };
+    } catch (err) {
+      console.warn('OCR pasada ' + (i + 1) + ' falló:', err.message);
+    }
+  }
+
+  // Último recurso: buscar cualquier secuencia alfanumérica tras "lote" en el
+  // texto con más confianza, aunque el formato sea raro
+  if (mejor.texto) {
+    const suelto = mejor.texto.match(/([A-Za-z]{1,3}[-\s]?\d{3,8})/);
+    if (suelto) return { lote: corregirLoteOcr(suelto[1]), fuente: 'OCR local (aprox)', confianza: Math.round(mejor.confianza) };
+  }
+  return { lote: '', fuente: 'OCR local', confianza: Math.round(mejor.confianza) || null };
 }
 
 /** ---- Interfaz: botón 📷 junto al campo N° Lote ----
@@ -207,20 +313,28 @@ async function abrirCamaraLote() {
   if (btnCapturar) btnCapturar.disabled = true;
 
   try {
-    // facingMode 'user' = cámara frontal del portátil. Si falla, cualquier cámara.
+    // Resolución alta: el OCR necesita píxeles. facingMode 'user' = cámara
+    // frontal del portátil. Si falla, cualquier cámara.
     camaraStreamLote = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
   } catch (err1) {
     try {
-      camaraStreamLote = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      camaraStreamLote = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
     } catch (err2) {
-      console.warn('Cámara no disponible:', err2);
-      cerrarCamaraLote();
-      showToast('No se pudo abrir la cámara: elige la foto de la papeleta.', 'error');
-      document.getElementById('ocr-lote-input').click();
-      return;
+      try {
+        camaraStreamLote = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      } catch (err3) {
+        console.warn('Cámara no disponible:', err3);
+        cerrarCamaraLote();
+        showToast('No se pudo abrir la cámara: elige la foto de la papeleta.', 'error');
+        document.getElementById('ocr-lote-input').click();
+        return;
+      }
     }
   }
 
@@ -235,6 +349,7 @@ function capturarFotoLote() {
     showToast('La cámara aún no está lista. Espera un segundo.', 'error');
     return;
   }
+  // Capturar a la máxima resolución disponible (a más píxeles, mejor OCR)
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;

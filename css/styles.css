@@ -895,10 +895,11 @@ textarea {
 
 /* Cámara del nº de lote (modal) */
 .camera-lote-video-box {
+  position: relative;
   background: #0f172a;
   border-radius: var(--radius-md);
   overflow: hidden;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -907,8 +908,21 @@ textarea {
 .camera-lote-video-box video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain; /* se ve la imagen COMPLETA, sin recortes */
   display: block;
+}
+
+/* Guía para centrar el número de lote */
+.camera-lote-video-box::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 32%;
+  bottom: 32%;
+  border: 2px dashed rgba(255, 255, 255, 0.55);
+  border-radius: 10px;
+  pointer-events: none;
 }
 
 /* Modals & Toasts */

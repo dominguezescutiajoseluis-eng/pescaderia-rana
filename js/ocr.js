@@ -1,210 +1,217 @@
 /* ==========================================================================
-   PESCADERÍA RANA - MOTOR DE ESCANEO OCR E INTELIGENCIA ARTIFICIAL (CON LOTE)
+   PESCADERÍA RANA - OCR DEL Nº DE LOTE (TRAZABILIDAD)
+   Un único punto de OCR: el botón 📷 junto al campo «N° Lote» del facturador.
+   Toma una foto de la papeleta, la lee SIN CONEXIÓN (Tesseract empaquetado en
+   vendor/tesseract, con preprocesado de imagen) y rellena el número de lote.
+   Si el usuario ha guardado una clave de Gemini, se intenta primero la IA
+   (eso sí usa internet) y cae al OCR local si no está disponible.
    ========================================================================== */
 
-let selectedImageBase64 = null;
-let cameraStream = null;
+let ocrLoteOcupado = false;
+let ocrWorkerPromise = null;
 
-/**
- * Inicializa los eventos del módulo de escáner OCR y cámara
- */
-function initOCRScanner() {
-  const fileInput = document.getElementById('camera-file-input');
-  const directFileInput = document.getElementById('direct-camera-file-input');
-  const btnStartCamera = document.getElementById('btn-start-camera');
-  const btnStopCamera = document.getElementById('btn-stop-camera');
-  const btnCaptureFrame = document.getElementById('btn-capture-frame');
-  const btnProcessOCR = document.getElementById('btn-process-ocr');
-  const btnAddScannedToInv = document.getElementById('btn-add-scanned-to-invoice');
-
-  // Evento Selección / Captura por archivo de cámara (Pestaña Escáner)
-  if (fileInput) {
-    fileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) handleImageSelected(file, false);
+/** Motor Tesseract local: worker, núcleo WASM y español van en vendor/ */
+function getOcrWorker() {
+  if (typeof Tesseract === 'undefined') {
+    return Promise.reject(new Error('Tesseract.js no está cargado.'));
+  }
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = Tesseract.createWorker('spa', 1, {
+      workerPath: 'vendor/tesseract/worker.min.js',
+      corePath: 'vendor/tesseract/core',
+      langPath: 'vendor/tesseract/lang',
+      logger: () => { /* el progreso se muestra en el estado del campo */ },
+      errorHandler: e => console.error('OCR error:', e),
     });
+    ocrWorkerPromise.catch(() => { ocrWorkerPromise = null; }); // permite reintentar
   }
-
-  // Evento Selección / Captura directa desde "Añadir Pescado"
-  if (directFileInput) {
-    directFileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) handleImageSelected(file, true);
-    });
-  }
-
-  // Eventos de cámara en vivo
-  if (btnStartCamera) btnStartCamera.addEventListener('click', startLiveCamera);
-  if (btnStopCamera) btnStopCamera.addEventListener('click', stopLiveCamera);
-  if (btnCaptureFrame) btnCaptureFrame.addEventListener('click', captureCameraFrame);
-
-  // Botón Analizar Papeleta (Pestaña Escáner)
-  if (btnProcessOCR) btnProcessOCR.addEventListener('click', () => runOCRAnalysis(false));
-
-  // Transferir ítems a la factura
-  if (btnAddScannedToInv) btnAddScannedToInv.addEventListener('click', transferDetectedItemsToInvoice);
+  return ocrWorkerPromise;
 }
 
 /**
- * Procesa la imagen seleccionada o capturada y activa el análisis
+ * Preprocesado de imagen para el OCR: reescala (las fotos de móvil suelen
+ * venir pequeñas), pasa a gris, estira el contraste y oscurece la tinta.
+ * Si algo falla, devuelve la imagen original (nunca rompe el escaneo).
  */
-function handleImageSelected(fileOrBlob, isDirectInline = false) {
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    selectedImageBase64 = e.target.result;
-    
-    if (isDirectInline) {
-      // Escaneo directo rápido dentro de la sección Añadir Pescado
-      await runDirectInlineOCRAnalysis(selectedImageBase64);
-    } else {
-      // Escaneo completo en la pestaña de Escáner Avanzado
-      const previewImg = document.getElementById('scanned-image-preview');
-      if (previewImg) previewImg.src = selectedImageBase64;
-      document.getElementById('scanner-preview-container').classList.remove('hidden');
-      document.getElementById('btn-process-ocr').disabled = false;
-      showToast('Papeleta cargada. Haz clic en Analizar Papeleta.');
-    }
-  };
-  reader.readAsDataURL(fileOrBlob);
-}
+function preprocesarImagen(imageBase64) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const LADO_GRANDE = 1700;
+        const mayor = Math.max(img.width, img.height);
+        let factor = 1;
+        if (mayor > LADO_GRANDE) factor = LADO_GRANDE / mayor;
+        else if (mayor < 900) factor = Math.min(3, 1200 / mayor);
+        const w = Math.max(1, Math.round(img.width * factor));
+        const h = Math.max(1, Math.round(img.height * factor));
 
-/**
- * Abre la cámara del dispositivo móvil o PC
- */
-async function startLiveCamera() {
-  const cameraBox = document.getElementById('live-camera-container');
-  const video = document.getElementById('camera-video');
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
 
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    video.srcObject = cameraStream;
-    cameraBox.classList.remove('hidden');
-  } catch (err) {
-    console.error('Error al acceder a la cámara:', err);
-    alert('No se pudo acceder a la cámara. Usa la opción de capturar foto / subir archivo.');
-  }
-}
-
-/**
- * Detiene la cámara en vivo
- */
-function stopLiveCamera() {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-  document.getElementById('live-camera-container').classList.add('hidden');
-}
-
-/**
- * Captura un fotograma de la cámara
- */
-function captureCameraFrame() {
-  const video = document.getElementById('camera-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth || 640;
-  canvas.height = video.videoHeight || 480;
-
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  canvas.toBlob((blob) => {
-    handleImageSelected(blob, true);
-    stopLiveCamera();
-  }, 'image/jpeg', 0.9);
-}
-
-/**
- * Ejecuta el escaneo directo e inserta el Lote, Concepto y Precios inmediatamente en los inputs de "Añadir Pescado"
- */
-async function runDirectInlineOCRAnalysis(imageBase64) {
-  const loading = document.getElementById('direct-scan-loading');
-  const statusText = document.getElementById('direct-scan-status');
-
-  loading.classList.remove('hidden');
-  statusText.textContent = 'Analizando número de lote y productos con la IA...';
-
-  try {
-    let items = [];
-    const apiKey = await getSetting('gemini_api_key', '');
-
-    if (apiKey) {
-      items = await processWithGeminiAI(imageBase64);
-    } else {
-      items = await processWithTesseractLocal(imageBase64);
-    }
-
-    if (items && items.length > 0) {
-      if (items.length === 1) {
-        // Un solo producto: Rellenar directamente el formulario de "Añadir Pescado"
-        const first = items[0];
-        document.getElementById('item-concept').value = first.concepto || '';
-        document.getElementById('item-lote').value = first.lote || extractLoteFromText(first.concepto) || '';
-        document.getElementById('item-qty').value = first.cantidad || '';
-        document.getElementById('item-price').value = first.precio_kg || '';
-        showToast('¡Datos y N° de Lote detectados y rellenados!');
-      } else {
-        // Múltiples productos: Añadirlos todos directamente a la factura con su Lote
-        addItemsToActiveInvoice(items);
-        showToast(`Se insertaron ${items.length} productos con sus lotes en la factura`);
+        const datos = ctx.getImageData(0, 0, w, h);
+        const p = datos.data;
+        const grises = new Uint8ClampedArray(w * h);
+        let min = 255, max = 0;
+        for (let i = 0, j = 0; i < p.length; i += 4, j++) {
+          const g = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0;
+          grises[j] = g;
+          if (g < min) min = g;
+          if (g > max) max = g;
+        }
+        const rango = Math.max(1, max - min);
+        for (let i = 0, j = 0; i < p.length; i += 4, j++) {
+          let g = ((grises[j] - min) * 255) / rango;
+          if (g < 110) g = g * 0.55; // engordar la tinta (trazos finos de bolígrafo)
+          p[i] = p[i + 1] = p[i + 2] = g;
+          p[i + 3] = 255;
+        }
+        ctx.putImageData(datos, 0, 0);
+        resolve(c.toDataURL('image/jpeg', 0.95));
+      } catch (err) {
+        console.warn('Preprocesado no disponible, se usa la imagen original:', err);
+        resolve(imageBase64);
       }
-    } else {
-      alert('No se pudieron leer filas claras. Por favor ingresa el lote y concepto manualmente.');
-    }
-  } catch (err) {
-    console.error('Error en escaneo directo:', err);
-    alert('Error leyendo papeleta: ' + err.message);
-  } finally {
-    loading.classList.add('hidden');
+    };
+    img.onerror = () => resolve(imageBase64);
+    img.src = imageBase64;
+  });
+}
+
+/** Busca el nº de lote en texto libre (formatos: "Lote: L-4521", "Lote #849",
+ *  "L. 4521", "L-4521", "Nº 104", "LOTE 2026-05") */
+function extraerLoteDeTexto(texto) {
+  if (!texto) return '';
+  const patrones = [
+    /(?:lote|lot)\s*(?:n[ºo°])?\s*[:#.=]?\s*([A-Za-z0-9][A-Za-z0-9\-\/.]{1,15})/i,
+    /\b([A-Za-z]{1,2}-\d{2,8})\b/,
+    /\b#\s?(\d{2,8})\b/,
+    /\bn[ºo°]\s*(\d{3,8})\b/i,
+  ];
+  for (const re of patrones) {
+    const m = String(texto).match(re);
+    if (m && m[1]) return m[1].replace(/[.,;:]+$/, '').trim();
   }
+  return '';
+}
+
+/** Quita el prefijo "Lote" si la IA lo devuelve con palabra incluida */
+function normalizarLote(valor) {
+  if (!valor) return '';
+  return String(valor).replace(/^lote\s*[:#.=]?\s*/i, '').replace(/[.,;:]+$/, '').trim();
+}
+
+/** Extrae el lote con el Agente IA (requiere clave guardada y conexión) */
+async function leerLoteConIA(imageBase64) {
+  const items = await processWithGeminiAI(imageBase64);
+  if (items && items.length) {
+    const candidato = normalizarLote(items[0].lote) || extraerLoteDeTexto(items[0].concepto || '');
+    if (candidato) return candidato;
+  }
+  return '';
 }
 
 /**
- * Ejecuta el análisis OCR o IA desde la pestaña Escáner Avanzado
+ * Lee la papeleta y devuelve { lote, fuente, confianza }.
+ * IA opcional primero (si hay clave y red), OCR local siempre como base.
  */
-async function runOCRAnalysis(isDirect = false) {
-  if (!selectedImageBase64) return;
+async function leerLoteDePapeleta(imageBase64) {
+  const apiKey = await getSetting('gemini_api_key', '');
+  if (apiKey && navigator.onLine) {
+    try {
+      const loteIA = await leerLoteConIA(imageBase64);
+      if (loteIA) return { lote: loteIA, fuente: 'IA Vision', confianza: null };
+    } catch (err) {
+      console.warn('IA no disponible, usando OCR local:', err.message);
+    }
+  }
 
-  const loading = document.getElementById('ocr-loading');
-  const statusText = document.getElementById('ocr-status-text');
-  const engine = document.querySelector('input[name="ocr-engine"]:checked').value;
+  const worker = await getOcrWorker();
+  const lista = await preprocesarImagen(imageBase64);
+  const result = await worker.recognize(lista);
+  const confianza = (result.data && typeof result.data.confidence === 'number')
+    ? Math.round(result.data.confidence) : null;
+  const lote = extraerLoteDeTexto(result.data.text);
+  return { lote, fuente: 'OCR local', confianza };
+}
 
-  loading.classList.remove('hidden');
-  document.getElementById('btn-process-ocr').disabled = true;
+/** ---- Interfaz: botón 📷 junto al campo N° Lote ---- */
+function initOcrLote() {
+  const btn = document.getElementById('btn-ocr-lote');
+  const input = document.getElementById('ocr-lote-input');
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', () => {
+    if (!ocrLoteOcupado) input.click();
+  });
+
+  input.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // permite repetir con el mismo fichero
+    if (file) leerYRellenarLote(file);
+  });
+}
+
+async function leerYRellenarLote(fileOrBlob) {
+  const btn = document.getElementById('btn-ocr-lote');
+  const icono = document.getElementById('ocr-lote-icon');
+  const estado = document.getElementById('ocr-lote-status');
+  const campo = document.getElementById('item-lote');
+
+  ocrLoteOcupado = true;
+  if (btn) btn.disabled = true;
+  if (icono) icono.className = 'fa-solid fa-spinner fa-spin';
+  if (estado) {
+    estado.textContent = 'Leyendo el nº de lote de la papeleta…';
+    estado.classList.remove('hidden');
+  }
 
   try {
-    let items = [];
-    if (engine === 'gemini') {
-      statusText.textContent = 'Buscando número de lote y trazabilidad con Agente IA Vision...';
-      items = await processWithGeminiAI(selectedImageBase64);
-    } else {
-      statusText.textContent = 'Procesando con Tesseract OCR local...';
-      items = await processWithTesseractLocal(selectedImageBase64);
-    }
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = ev => resolve(ev.target.result);
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      reader.readAsDataURL(fileOrBlob);
+    });
 
-    renderDetectedItems(items);
-    showToast(`Se identificaron ${items.length} productos en la papeleta`);
+    const res = await leerLoteDePapeleta(base64);
+
+    if (res && res.lote) {
+      const extra = res.confianza !== null && res.confianza !== undefined ? ' (' + res.confianza + '%)' : '';
+      if (campo) campo.value = res.lote;
+      if (estado) estado.textContent = 'Nº de lote detectado: ' + res.lote + extra + ' — ' + res.fuente;
+      showToast('Nº de lote detectado: ' + res.lote + extra);
+    } else {
+      if (estado) estado.textContent = 'No se pudo leer el lote. Escríbelo a mano.';
+      showToast('No se detectó ningún nº de lote. Escríbelo a mano.', 'error');
+    }
   } catch (err) {
-    console.error('Error en escaneo OCR/IA:', err);
-    const fallbackItems = await processWithTesseractLocal(selectedImageBase64);
-    renderDetectedItems(fallbackItems);
+    console.error('OCR lote:', err);
+    if (estado) estado.textContent = 'Error leyendo la papeleta: ' + err.message;
+    showToast('Error leyendo la papeleta: ' + err.message, 'error');
   } finally {
-    loading.classList.add('hidden');
-    document.getElementById('btn-process-ocr').disabled = false;
+    ocrLoteOcupado = false;
+    if (btn) btn.disabled = false;
+    if (icono) icono.className = 'fa-solid fa-camera-retro';
+    setTimeout(() => { if (estado) estado.classList.add('hidden'); }, 8000);
   }
 }
 
-/**
- * Procesa la papeleta usando la API de Gemini Vision especificando la captura del N° de Lote
- */
+document.addEventListener('DOMContentLoaded', initOcrLote);
+
+/* ==========================================================================
+   AGENTE IA VISION (opcional): usa la clave guardada en Configuración.
+   Si no hay clave o no hay conexión, el flujo cae al OCR local.
+   ========================================================================== */
 async function processWithGeminiAI(imageBase64) {
   const apiKey = await getSetting('gemini_api_key', '');
-  
+
   if (!apiKey) {
-    console.warn('Sin clave de Gemini configurada. Usando analizador local.');
-    return await processWithTesseractLocal(imageBase64);
+    throw new Error('Sin clave de Gemini configurada.');
   }
 
   const cleanBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
@@ -245,191 +252,10 @@ No agregues explicaciones ni bloques markdown. Responde ÚNICAMENTE con el array
 
   const data = await response.json();
   const textResponse = data.candidates[0].content.parts[0].text;
-  
+
   const jsonMatch = textResponse.match(/\[.*\]/s);
   if (jsonMatch) {
     return JSON.parse(jsonMatch[0]);
   }
   return JSON.parse(textResponse);
-}
-
-/**
- * OCR Local con Tesseract y extractor de Número de Lote
- */
-async function processWithTesseractLocal(imageBase64) {
-  if (typeof Tesseract === 'undefined') {
-    throw new Error('Tesseract.js no está cargado.');
-  }
-
-  const result = await Tesseract.recognize(imageBase64, 'spa', {
-    logger: m => console.log(m)
-  });
-
-  const text = result.data.text;
-  console.log('Texto OCR Reconocido:\n', text);
-
-  return parsePapeletaTextToItemsWithLote(text);
-}
-
-/**
- * Analizador heurístico para extraer productos y su N° de Lote
- */
-function parsePapeletaTextToItemsWithLote(rawText) {
-  const lines = rawText.split('\n');
-  const detectedItems = [];
-
-  // Buscar si hay un lote global en la papeleta
-  const globalLoteMatch = rawText.match(/(?:lote|lot|l-)\s*[:#]?\s*([a-zA-Z0-9-]+)/i);
-  const globalLote = globalLoteMatch ? `Lote ${globalLoteMatch[1]}` : '';
-
-  const fishKeywords = ['gamba', 'merluza', 'boqueron', 'boquerón', 'sardina', 'calamar', 'pulpo', 'dorada', 'lubina', 'bacalao', 'lenguado', 'sepia', 'salmon', 'salmón', 'atún', 'atun', 'rape', 'pescadilla', 'cigala', 'langostino', 'almeja', 'coquina', 'pargo', 'corvina', 'gallineta', 'chopo', 'pota'];
-
-  lines.forEach(line => {
-    const lower = line.toLowerCase().trim();
-    if (!lower) return;
-
-    const hasFish = fishKeywords.some(kw => lower.includes(kw));
-    const numbers = lower.match(/(\d+[.,]?\d*)/g);
-
-    if (hasFish || (numbers && numbers.length >= 2)) {
-      let qty = 1.0;
-      let price = 0.0;
-
-      if (numbers && numbers.length >= 1) qty = parseFloat(numbers[0].replace(',', '.'));
-      if (numbers && numbers.length >= 2) price = parseFloat(numbers[1].replace(',', '.'));
-
-      const subtotal = Math.round(qty * price * 100) / 100;
-
-      // Buscar lote específico en la línea
-      const lineLoteMatch = line.match(/(?:lote|lot|l-)\s*[:#]?\s*([a-zA-Z0-9-]+)/i);
-      const lote = lineLoteMatch ? `Lote ${lineLoteMatch[1]}` : globalLote;
-
-      let concepto = line.replace(/(?:lote|lot|l-)\s*[:#]?\s*[a-zA-Z0-9-]+/gi, '').replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,#-]/gi, ' ').trim();
-      if (!concepto) concepto = 'Pescado fresco de lonja';
-
-      detectedItems.push({
-        lote: lote || '',
-        cantidad: qty || 1.0,
-        concepto: concepto,
-        precio_kg: price || 0.0,
-        subtotal: subtotal || 0.0
-      });
-    }
-  });
-
-  if (detectedItems.length === 0) {
-    detectedItems.push({
-      lote: globalLote || 'Lote ' + new Date().toISOString().slice(2,10).replace(/-/g,''),
-      cantidad: 1.0,
-      concepto: 'Pescado fresco de lonja',
-      precio_kg: 0.0,
-      subtotal: 0.0
-    });
-  }
-
-  return detectedItems;
-}
-
-/**
- * Busca patrones de lote en un texto libre
- */
-function extractLoteFromText(text) {
-  if (!text) return '';
-  const match = text.match(/(?:lote|lot|l-)\s*[:#]?\s*([a-zA-Z0-9-]+)/i);
-  return match ? match[1] : '';
-}
-
-/**
- * Renderiza los ítems e incluye el campo del Número de Lote
- */
-function renderDetectedItems(items) {
-  const container = document.getElementById('detected-items-list');
-  const actionsBar = document.getElementById('detected-actions');
-
-  if (!items || items.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-        <p>No se lograron extraer filas automáticamente. Puedes añadir manualmente.</p>
-      </div>`;
-    actionsBar.classList.add('hidden');
-    return;
-  }
-
-  let html = '';
-  items.forEach((item, index) => {
-    html += `
-      <div class="detected-item-card" data-index="${index}">
-        <div class="form-row">
-          <div class="form-group flex-2">
-            <label>Concepto / Especie</label>
-            <input type="text" class="form-input det-concept" value="${escapeHtml(item.concepto || '')}">
-          </div>
-          <div class="form-group flex-1">
-            <label><i class="fa-solid fa-barcode"></i> N° Lote</label>
-            <input type="text" class="form-input det-lote" value="${escapeHtml(item.lote || '')}">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Cantidad (Kg)</label>
-            <input type="number" step="0.01" class="form-input det-qty" value="${item.cantidad || 1}">
-          </div>
-          <div class="form-group">
-            <label>Precio/Kg (€)</label>
-            <input type="number" step="0.01" class="form-input det-price" value="${item.precio_kg || 0}">
-          </div>
-          <div class="form-group">
-            <label>Subtotal (€)</label>
-            <input type="number" step="0.01" class="form-input det-subtotal" value="${item.subtotal || 0}" readonly>
-          </div>
-        </div>
-      </div>
-    `;
-  });
-
-  container.innerHTML = html;
-  actionsBar.classList.remove('hidden');
-
-  container.querySelectorAll('.detected-item-card').forEach(card => {
-    const qtyInput = card.querySelector('.det-qty');
-    const priceInput = card.querySelector('.det-price');
-    const subtotalInput = card.querySelector('.det-subtotal');
-
-    const updateSub = () => {
-      const q = parseFloat(qtyInput.value) || 0;
-      const p = parseFloat(priceInput.value) || 0;
-      subtotalInput.value = (q * p).toFixed(2);
-    };
-
-    qtyInput.addEventListener('input', updateSub);
-    priceInput.addEventListener('input', updateSub);
-  });
-}
-
-/**
- * Transfiere los productos escaneados con su N° de Lote a la factura activa
- */
-function transferDetectedItemsToInvoice() {
-  const itemCards = document.querySelectorAll('.detected-item-card');
-  if (itemCards.length === 0) return;
-
-  const itemsToAdd = [];
-  itemCards.forEach(card => {
-    const concepto = card.querySelector('.det-concept').value.trim();
-    const lote = card.querySelector('.det-lote').value.trim();
-    const cantidad = parseFloat(card.querySelector('.det-qty').value) || 0;
-    const precio_kg = parseFloat(card.querySelector('.det-price').value) || 0;
-    const subtotal = parseFloat(card.querySelector('.det-subtotal').value) || (cantidad * precio_kg);
-
-    if (concepto) {
-      itemsToAdd.push({ concepto, lote, cantidad, precio_kg, subtotal });
-    }
-  });
-
-  if (itemsToAdd.length > 0) {
-    addItemsToActiveInvoice(itemsToAdd);
-    showToast(`Se añadieron ${itemsToAdd.length} productos con sus lotes a la factura`);
-    document.querySelector('.nav-btn[data-tab="invoice-builder"]').click();
-  }
 }

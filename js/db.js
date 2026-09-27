@@ -66,13 +66,17 @@ async function getAllClients() {
   });
 }
 
-async function saveClient(client) {
+async function saveClient(client, opts = {}) {
   const db = await initDB();
+  if (!opts.fromSync) client.updatedAt = new Date().toISOString();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('clients', 'readwrite');
     const store = tx.objectStore('clients');
     const request = client.id ? store.put(client) : store.add(client);
-    request.onsuccess = (e) => resolve(e.target.result);
+    request.onsuccess = (e) => {
+      if (!opts.fromSync && typeof hookSave === 'function') hookSave('clients', e.target.result);
+      resolve(e.target.result);
+    };
     request.onerror = (e) => reject(e.target.error);
   });
 }
@@ -83,7 +87,10 @@ async function deleteClient(id) {
     const tx = db.transaction('clients', 'readwrite');
     const store = tx.objectStore('clients');
     const request = store.delete(Number(id));
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      if (typeof hookDelete === 'function') hookDelete('clients', Number(id));
+      resolve(true);
+    };
     request.onerror = (e) => reject(e.target.error);
   });
 }
@@ -112,17 +119,20 @@ async function getInvoiceById(id) {
   });
 }
 
-async function saveInvoice(invoice) {
+async function saveInvoice(invoice, opts = {}) {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('invoices', 'readwrite');
     const store = tx.objectStore('invoices');
     // Ensure timestamp
-    invoice.updatedAt = new Date().toISOString();
+    if (!opts.fromSync) invoice.updatedAt = new Date().toISOString();
     if (!invoice.createdAt) invoice.createdAt = new Date().toISOString();
     
     const request = invoice.id ? store.put(invoice) : store.add(invoice);
-    request.onsuccess = (e) => resolve(e.target.result);
+    request.onsuccess = (e) => {
+      if (!opts.fromSync && typeof hookSave === 'function') hookSave('invoices', e.target.result);
+      resolve(e.target.result);
+    };
     request.onerror = (e) => reject(e.target.error);
   });
 }
@@ -133,7 +143,10 @@ async function deleteInvoice(id) {
     const tx = db.transaction('invoices', 'readwrite');
     const store = tx.objectStore('invoices');
     const request = store.delete(Number(id));
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      if (typeof hookDelete === 'function') hookDelete('invoices', Number(id));
+      resolve(true);
+    };
     request.onerror = (e) => reject(e.target.error);
   });
 }
@@ -164,24 +177,5 @@ async function saveSetting(key, value) {
   });
 }
 
-// Carga inicial con algunos clientes de demostración si la BD está vacía
-async function seedInitialDataIfEmpty() {
-  const clients = await getAllClients();
-  if (clients.length === 0) {
-    console.log('Inicializando clientes de ejemplo en la agenda...');
-    await saveClient({
-      name: 'Restaurante El Marisco',
-      cif: 'B-29123456',
-      address: 'Paseo Marítimo, 12',
-      province: 'Málaga',
-      phone: '952 555 123'
-    });
-    await saveClient({
-      name: 'Chiringuito Pepe',
-      cif: 'A-29876543',
-      address: 'Playa de Algarrobo, s/n',
-      province: 'Málaga',
-      phone: '610 998 877'
-    });
-  }
-}
+// La agenda nace VACÍA: no se siembran clientes de ejemplo.
+// Todo lo que aparezca lo habrá dado de alta el usuario.

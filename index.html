@@ -7,6 +7,7 @@
   
   <!-- PWA & Mobile Web App Settings -->
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="assets/icon-192.png">
   <meta name="theme-color" content="#0d5c75">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,23 +15,19 @@
   <meta name="apple-mobile-web-app-title" content="Pescadería Rana">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 
-  <!-- Google Fonts & Font Awesome Icons -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Tipografías e iconos LOCALES: nada se descarga de internet -->
+  <link rel="stylesheet" href="css/fonts.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
   
   <!-- Estilos principales -->
   <link rel="stylesheet" href="css/styles.css">
   
-  <!-- Firebase SDK v9+ Modular via Compat scripts -->
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-
-  <!-- Tesseract.js (Local OCR Client-side) -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <!-- html2pdf.js for direct PDF download -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <!-- OCR local (Tesseract empaquetado) y PDF (html2pdf empaquetado) -->
+  <script src="vendor/tesseract/tesseract.min.js"></script>
+  <script src="vendor/html2pdf/html2pdf.bundle.min.js"></script>
+  <!-- SDK de Firebase (LOCAL): solo se usa si el usuario conecta la nube -->
+  <script src="vendor/firebase/firebase-app-compat.js"></script>
+  <script src="vendor/firebase/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <div id="app" class="app-container">
@@ -51,10 +48,7 @@
           <i class="fa-solid fa-file-invoice-dollar"></i>
           <span>Crear Factura</span>
         </button>
-        <button class="nav-btn" data-tab="ocr-scanner">
-          <i class="fa-solid fa-camera"></i>
-          <span>Escáner Avanzado Papeletas</span>
-        </button>
+
         <button class="nav-btn" data-tab="clients-manager">
           <i class="fa-solid fa-address-book"></i>
           <span>Agenda Clientes</span>
@@ -178,28 +172,6 @@
               <h3><i class="fa-solid fa-fish"></i> Añadir Pescado</h3>
             </div>
 
-            <!-- ESCÁNER DIRECTO DE PAPELETA -->
-            <div class="direct-scan-banner">
-              <div class="scan-banner-info">
-                <i class="fa-solid fa-camera"></i>
-                <div>
-                  <strong>Escanear Papeleta con OCR e IA</strong>
-                  <p>Captura el número de lote, producto, kilos y precio automáticamente</p>
-                </div>
-              </div>
-              <div class="scan-banner-actions">
-                <label for="direct-camera-file-input" class="btn btn-primary btn-sm">
-                  <i class="fa-solid fa-camera-retro"></i> Capturar Foto Papeleta
-                  <input type="file" id="direct-camera-file-input" accept="image/*" capture="environment" style="display:none;">
-                </label>
-              </div>
-            </div>
-
-            <div id="direct-scan-loading" class="loading-spinner hidden">
-              <div class="spinner"></div>
-              <p id="direct-scan-status">Leyendo número de lote y datos de la papeleta...</p>
-            </div>
-
             <div class="add-item-box margin-top-sm">
               <div class="form-row">
                 <div class="form-group flex-2">
@@ -207,8 +179,15 @@
                   <input type="text" id="item-concept" class="form-input" placeholder="Ej: Merluza fresca, Gamba blanca">
                 </div>
                 <div class="form-group flex-1">
-                  <label for="item-lote"><i class="fa-solid fa-barcode"></i> N° Lote</label>
-                  <input type="text" id="item-lote" class="form-input" placeholder="Ej: L-2026-88">
+                  <label for="item-lote"><i class="fa-solid fa-barcode"></i> N° Lote (trazabilidad)</label>
+                  <div class="input-with-button">
+                    <input type="text" id="item-lote" class="form-input" placeholder="Ej: L-2026-88">
+                    <button id="btn-ocr-lote" class="btn btn-secondary" title="Leer el nº de lote de la papeleta con la cámara (sin conexión)">
+                      <i id="ocr-lote-icon" class="fa-solid fa-camera-retro"></i>
+                    </button>
+                    <input type="file" id="ocr-lote-input" accept="image/*" capture="environment" style="display:none;">
+                  </div>
+                  <p id="ocr-lote-status" class="help-text hidden" style="margin-top:6px;"></p>
                 </div>
               </div>
               <div class="form-row">
@@ -291,94 +270,6 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- TAB 2: ESCÁNER PAPELETA OCR / IA -->
-      <section id="ocr-scanner" class="tab-content">
-        <div class="section-header">
-          <div>
-            <h1>Escáner Avanzado de Papeletas</h1>
-            <p>Escaneo masivo y revisión detallada de papeletas de lonja</p>
-          </div>
-        </div>
-
-        <div class="scanner-grid">
-          <div class="card scanner-input-card">
-            <h3><i class="fa-solid fa-camera"></i> Escanear con Cámara / Foto</h3>
-            
-            <div class="scanner-controls">
-              <label for="camera-file-input" class="btn btn-lg btn-primary drop-zone">
-                <i class="fa-solid fa-camera-retro"></i>
-                <span>Tomar Foto / Subir Papeleta</span>
-                <input type="file" id="camera-file-input" accept="image/*" capture="environment">
-              </label>
-
-              <button id="btn-start-camera" class="btn btn-secondary full-width margin-top-sm">
-                <i class="fa-solid fa-video"></i> Abrir Cámara en Directo
-              </button>
-            </div>
-
-            <div id="live-camera-container" class="live-camera-box hidden">
-              <video id="camera-video" autoplay playsinline></video>
-              <div class="camera-actions">
-                <button id="btn-capture-frame" class="btn btn-success">
-                  <i class="fa-solid fa-circle"></i> Capturar Foto
-                </button>
-                <button id="btn-stop-camera" class="btn btn-danger">
-                  <i class="fa-solid fa-xmark"></i> Cerrar
-                </button>
-              </div>
-            </div>
-
-            <!-- Image Preview -->
-            <div id="scanner-preview-container" class="preview-image-box hidden">
-              <img id="scanned-image-preview" src="" alt="Papeleta escaneada">
-            </div>
-
-            <!-- OCR Engine Selector -->
-            <div class="form-group margin-top-md">
-              <label><i class="fa-solid fa-brain"></i> Motor Inteligente de Lectura</label>
-              <div class="radio-group">
-                <label class="radio-label">
-                  <input type="radio" name="ocr-engine" value="gemini" checked>
-                  <span>Agente IA Vision (Reconocimiento de Lote y Trazabilidad)</span>
-                </label>
-                <label class="radio-label">
-                  <input type="radio" name="ocr-engine" value="tesseract">
-                  <span>OCR Local Sin Conexión (Tesseract)</span>
-                </label>
-              </div>
-            </div>
-
-            <button id="btn-process-ocr" class="btn btn-success full-width margin-top-md" disabled>
-              <i class="fa-solid fa-wand-magic-sparkles"></i> Analizar Papeleta
-            </button>
-            
-            <div id="ocr-loading" class="loading-spinner hidden">
-              <div class="spinner"></div>
-              <p id="ocr-status-text">Analizando número de lote y datos de la papeleta...</p>
-            </div>
-          </div>
-
-          <!-- Scanner Results Card -->
-          <div class="card scanner-results-card">
-            <h3><i class="fa-solid fa-list-check"></i> Filas y Lotes Detectados</h3>
-            <p class="help-text">Verifica o modifica el Lote y datos extraídos antes de meterlos a la factura:</p>
-
-            <div id="detected-items-list" class="detected-list">
-              <div class="empty-state">
-                <i class="fa-solid fa-receipt"></i>
-                <p>Captura una foto de tu papeleta para extraer el N° de Lote, concepto, kilos y precio automáticamente.</p>
-              </div>
-            </div>
-
-            <div id="detected-actions" class="detected-actions-bar hidden">
-              <button id="btn-add-scanned-to-invoice" class="btn btn-primary full-width">
-                <i class="fa-solid fa-file-export"></i> Insertar Ítems en la Factura Actual
-              </button>
             </div>
           </div>
         </div>
@@ -677,22 +568,12 @@
 
   <!-- JavaScript Modules -->
   <script src="js/db.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/ocr.js"></script>
   <script src="js/clients.js"></script>
   <script src="js/invoices.js"></script>
   <script src="js/reports.js"></script>
   <script src="js/pdf.js"></script>
   <script src="js/app.js"></script>
-  
-  <!-- Registrar Service Worker para soporte PWA -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(reg => console.log('Service Worker registrado:', reg.scope))
-          .catch(err => console.warn('Error registrando Service Worker:', err));
-      });
-    }
-  </script>
 </body>
 </html>

@@ -3,10 +3,9 @@
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // 1. Inicializar Base de Datos Local
+  // 1. Inicializar Base de Datos Local (sin datos de ejemplo)
   try {
     await initDB();
-    await seedInitialDataIfEmpty();
   } catch (err) {
     console.error('Error inicializando BD:', err);
   }
@@ -20,9 +19,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 4. Inicializar Módulos de la App
   initClientsModule();
   initInvoicesModule();
-  initOCRScanner();
   initPDFModule();
   initSettingsModule();
+  initReportsModule();
 });
 
 /**
@@ -101,6 +100,7 @@ async function initSettingsModule() {
       showToast('Clave de la IA guardada correctamente');
     });
   }
+
 }
 
 /**

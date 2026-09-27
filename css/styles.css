@@ -174,9 +174,76 @@ body {
     height: 100vh;
   }
 
+  /* ===== MENÚ LATERAL RETRÁCTIL =====
+     Colapsado deja ver solo los iconos (72px); al pasar el ratón por él se
+     despliega a su ancho completo con las etiquetas, sin tocar el contenido
+     (la ventana se expande sobre su zona de sombra). Con teclado también:
+     :focus-within lo despliega al tabular hasta un botón del menú. */
   .sidebar {
     height: 100vh;
-    overflow-y: auto;
+    overflow: hidden auto;
+    width: 72px;
+    flex: 0 0 72px;
+    transition: width 0.22s ease, flex-basis 0.22s ease;
+    box-shadow: 12px 0 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .sidebar:hover,
+  .sidebar:focus-within {
+    width: 260px;
+    flex: 0 0 260px;
+  }
+
+  /* Elementos que solo tienen sentido con el menú desplegado */
+  .brand-info,
+  .nav-btn span,
+  .mobile-device-info span {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease 0s;
+    white-space: nowrap;
+  }
+
+  .sidebar:hover .brand-info,
+  .sidebar:hover .nav-btn span,
+  .sidebar:hover .mobile-device-info span,
+  .sidebar:focus-within .brand-info,
+  .sidebar:focus-within .nav-btn span,
+  .sidebar:focus-within .mobile-device-info span {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.18s ease 0.1s;
+  }
+
+  .brand {
+    gap: 0.75rem;
+  }
+
+  .brand-logo {
+    flex: 0 0 auto;
+    padding: 0.5rem;
+  }
+
+  .nav-btn {
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  .nav-btn i {
+    flex: 0 0 22px;
+  }
+
+  /* Indicador visual: borde brillante a la izquierda del icono activo */
+  .nav-btn.active {
+    box-shadow: inset 4px 0 0 #38bdf8, 0 4px 12px rgba(56, 189, 248, 0.3);
+  }
+
+  .mobile-device-info {
+    overflow: hidden;
+  }
+
+  .mobile-device-info i {
+    flex: 0 0 auto;
   }
 
   .main-content {

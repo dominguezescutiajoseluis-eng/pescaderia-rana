@@ -189,39 +189,91 @@ function umbralOtsu(g) {
   return mejor;
 }
 
-/** Binarización adaptativa por bloque: aguanta sombras y papel arrugado */
+/** Binarización adaptativa con IMAGEN INTEGRAL: media local en O(1) por
+ *  píxel (antes era O(ventana) por píxel y tardaba muchísimo en equipos
+ *  antiguos). Mismo resultado: aguanta sombras y papel arrugado. */
 function binarizarAdaptativa(g, w, h) {
+  const W1 = w + 1;
+  const integral = new Float64Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let sumaFila = 0;
+    for (let x = 0; x < w; x++) {
+      sumaFila += g[y * w + x];
+      integral[(y + 1) * W1 + (x + 1)] = integral[y * W1 + (x + 1)] + sumaFila;
+    }
+  }
   const out = new Uint8Array(g.length);
-  const medio = 9;             // ventana 9x9 de medias locales
-  const half = (medio - 1) / 2;
+  const r = 8;                 // radio de la ventana (17x17)
   const C = 12;                // margen bajo el umbral local
   for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r);
     for (let x = 0; x < w; x++) {
-      let suma = 0, n = 0;
-      for (let dy = -half; dy <= half; dy++) {
-        const yy = y + dy;
-        if (yy < 0 || yy >= h) continue;
-        for (let dx = -half; dx <= half; dx++) {
-          const xx = x + dx;
-          if (xx < 0 || xx >= w) continue;
-          suma += g[yy * w + xx];
-          n++;
-        }
-      }
-      out[y * w + x] = g[y * w + x] < (suma / n) - C ? 0 : 255;
+      const x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const suma = integral[(y1 + 1) * W1 + (x1 + 1)] - integral[y0 * W1 + (x1 + 1)]
+                 - integral[(y1 + 1) * W1 + x0] + integral[y0 * W1 + x0];
+      out[y * w + x] = g[y * w + x] < (suma / area) - C ? 0 : 255;
     }
   }
   return out;
 }
 
+/** Recorta la ZONA DE LA GUÍA de la cámara (con margen) reescalada a un ancho
+ *  determinado. La reducción va en dos pasos para no perder trazos finos de
+ *  bolígrafo (un reescalado directo de 4000px a 1100px los borra). */
+function recorteGuia(img, anchoDeseado) {
+  const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;   // zona guía + margen
+  const sx = Math.round(img.width * rx);
+  const sy = Math.round(img.height * ry);
+  const sw = Math.max(16, Math.round(img.width * rw));
+  const sh = Math.max(16, Math.round(img.height * rh));
+  const ancho = Math.round(Math.min(anchoDeseado, sw));   // nunca ampliar de más
+  const paso1W = sw > ancho * 2 ? ancho * 2 : sw;
+  const paso1H = Math.max(16, Math.round(paso1W * sh / sw));
+  const paso1 = document.createElement('canvas');
+  paso1.width = paso1W; paso1.height = paso1H;
+  let ctx = paso1.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, paso1W, paso1H);
+  if (paso1W <= ancho) return { c: paso1, ctx };
+  const c = document.createElement('canvas');
+  c.width = ancho;
+  c.height = Math.max(16, Math.round(ancho * sh / sw));
+  ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(paso1, 0, 0, c.width, c.height);
+  return { c, ctx };
+}
+
+/** Foto entera reducida a un lado máximo, en grises con un filtro opcional.
+ *  Tamaños menores que antes: el OCR no gana nada con 2000px y los equipos
+ *  modestos lo agradecen muchísimo (menos píxeles = menos segundos). */
+function fotoReducida(img, ladoMax, filtro = null) {
+  const mayor = Math.max(img.width, img.height);
+  const factor = mayor > ladoMax ? ladoMax / mayor : 1;
+  const { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
+  let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
+  if (filtro === 'engordar') g = engordarTinta(g, canvas.width, canvas.height);
+  else if (filtro === 'otsu') g = binarizarOtsu(g);
+  else if (filtro === 'otsu-rayas-dilata') {
+    g = binarizarOtsu(g);
+    g = quitarRayasHorizontales(g, canvas.width, canvas.height);
+    g = dilatarTinta(g, canvas.width, canvas.height);
+  } else if (filtro === 'negativo') {
+    const out = new Uint8Array(g.length);
+    for (let j = 0; j < g.length; j++) out[j] = 255 - g[j];
+    g = out;
+  }
+  pintarGrises(canvas, g);
+  return canvas;
+}
+
 /**
- * Genera TODAS las variantes de una misma foto para maximizar la lectura.
- * - full:     foto entera (por si el papel se encuadra lejos)
- * - guia:     recorte de la zona de la guía de la cámara, ampliado (la clave
- *             para manuscrito: el lote ocupa casi todo el recorte)
- * - binaria:  foto entera con umbral Otsu
- * - adapt:    recorte guía con binarización adaptativa (sombras/pliegues)
- * - invertida: foto entera en negativo
+ * Genera las variantes de la foto, ordenadas de MÁS PROBABLE a menos y todas
+ * ellas EN PEQUEÑO (rápido en equipos antiguos). En cuanto una pasada acierte
+ * con confianza (>= 50), el bucle no sigue: las de atrás rara vez hacen falta.
  */
 async function variantesDeImagen(imageBase64) {
   const variantes = [];
@@ -229,132 +281,50 @@ async function variantesDeImagen(imageBase64) {
   try {
     img = await cargarImagen(imageBase64);
   } catch (err) {
-    return [imageBase64]; // nunca romper el escaneo
+    return [{ nombre: 'completa', data: imageBase64 }]; // nunca romper el escaneo
   }
 
-  // 0) ANTI-RAYADO PRIMERO: la combinación que mejor funciona con bolígrafo
-  //    sobre papel de cuaderno (binarizar + quitar rayas + engordar trazos)
+  // 1) Recorte de la guía ANTI-RAYADO (bolígrafo sobre cuaderno): la más fiable
   try {
-    const LADO = 1800;
-    const mayor = Math.max(img.width, img.height);
-    const factor = mayor > LADO ? LADO / mayor : 1;
-    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
-    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
-    g = binarizarOtsu(g);
-    g = quitarRayasHorizontales(g, canvas.width, canvas.height);
-    g = dilatarTinta(g, canvas.width, canvas.height);
-    pintarGrises(canvas, g);
-    variantes.push({ nombre: 'rayado', data: canvas.toDataURL('image/jpeg', 0.95) });
-  } catch (err) { /* seguimos */ }
-
-  // 1) Foto entera mejorada (grises + contraste + tinta engordada)
-  try {
-    const LADO = 2000;
-    const mayor = Math.max(img.width, img.height);
-    let factor = mayor > LADO ? LADO / mayor : (mayor < 1000 ? Math.min(3, 1400 / mayor) : 1);
-    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
-    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
-    g = engordarTinta(g, canvas.width, canvas.height);
-    pintarGrises(canvas, g);
-    variantes.push({ nombre: 'completa', data: canvas.toDataURL('image/jpeg', 0.95) });
-  } catch (err) {
-    variantes.push({ nombre: 'completa', data: imageBase64 });
-  }
-
-  // 2) Recorte de la ZONA DE LA GUÍA de la cámara (lote 18-82% x 32-68%)
-  //    con margen holgado, reescalado en GRANDE (manuscrito necesita píxeles)
-  try {
-    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44; // zona guía + margen
-    const sx = Math.round(img.width * rx);
-    const sy = Math.round(img.height * ry);
-    const sw = Math.max(16, Math.round(img.width * rw));
-    const sh = Math.max(16, Math.round(img.height * rh));
-    // el recorte final sube hasta 1600px de ancho
-    const escala = Math.min(3, Math.max(1, 1600 / sw));
-    const c = document.createElement('canvas');
-    c.width = Math.round(sw * escala);
-    c.height = Math.round(sh * escala);
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-    variantes.push({ nombre: 'recorte-guia', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
-
-    // 2b) mismo recorte con Otsu
-    const g = grisesDeCanvas(ctx, c.width, c.height);
-    const c2 = document.createElement('canvas');
-    c2.width = c.width; c2.height = c.height;
-    pintarGrises(c2, binarizarOtsu(g));
-    variantes.push({ nombre: 'recorte-guia-otsu', data: c2.toDataURL('image/jpeg', 0.95), recorte: true });
-  } catch (err) { /* sin recorte, seguimos */ }
-
-  // 3) Binaria (Otsu) de la foto entera
-  try {
-    const LADO = 1800;
-    const mayor = Math.max(img.width, img.height);
-    const factor = mayor > LADO ? LADO / mayor : 1;
-    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
-    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
-    pintarGrises(canvas, binarizarOtsu(g));
-    variantes.push({ nombre: 'binaria', data: canvas.toDataURL('image/jpeg', 0.95) });
-  } catch (err) { /* seguimos */ }
-
-  // 3c) CIFRAS: recorte guía binarizado, sin rayas y con trazos engordados
-  try {
-    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;
-    const sx = Math.round(img.width * rx);
-    const sy = Math.round(img.height * ry);
-    const sw = Math.max(16, Math.round(img.width * rw));
-    const sh = Math.max(16, Math.round(img.height * rh));
-    const escala = Math.min(3, Math.max(1, 1600 / sw));
-    const c = document.createElement('canvas');
-    c.width = Math.round(sw * escala);
-    c.height = Math.round(sh * escala);
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const { c, ctx } = recorteGuia(img, 1100);
     let g = grisesDeCanvas(ctx, c.width, c.height);
     g = engordarTinta(g, c.width, c.height);
     g = binarizarOtsu(g);
     g = quitarRayasHorizontales(g, c.width, c.height);
     g = dilatarTinta(g, c.width, c.height);
     pintarGrises(c, g);
-    variantes.push({ nombre: 'cifras', data: c.toDataURL('image/jpeg', 0.95), recorte: true, soloCifras: true });
+    variantes.push({ nombre: 'guia-cifras', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
   } catch (err) { /* seguimos */ }
 
-  // 4) Binarización adaptativa del recorte guía (pliegues/sombras)
+  // 2) Recorte de la guía en gris (impresiones nítidas)
   try {
-    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;
-    const sx = Math.round(img.width * rx);
-    const sy = Math.round(img.height * ry);
-    const sw = Math.max(16, Math.round(img.width * rw));
-    const sh = Math.max(16, Math.round(img.height * rh));
-    const escala = Math.min(3, Math.max(1, 1400 / sw));
-    const c = document.createElement('canvas');
-    c.width = Math.round(sw * escala);
-    c.height = Math.round(sh * escala);
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-    let g = grisesDeCanvas(ctx, c.width, c.height);
+    const { c } = recorteGuia(img, 1100);
+    variantes.push({ nombre: 'guia', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
+  } catch (err) { /* seguimos */ }
+
+  // 3) Completa anti-rayado (por si el código está fuera de la guía)
+  try {
+    variantes.push({ nombre: 'rayado', data: fotoReducida(img, 1200, 'otsu-rayas-dilata').toDataURL('image/jpeg', 0.95) });
+  } catch (err) { /* seguimos */ }
+
+  // 4) Completa en gris con tinta engordada
+  try {
+    variantes.push({ nombre: 'completa', data: fotoReducida(img, 1200, 'engordar').toDataURL('image/jpeg', 0.95) });
+  } catch (err) {
+    variantes.push({ nombre: 'completa', data: imageBase64 });
+  }
+
+  // 5) Recorte con binarización adaptativa (sombras/pliegues)
+  try {
+    const { c, ctx } = recorteGuia(img, 900);
+    const g = grisesDeCanvas(ctx, c.width, c.height);
     pintarGrises(c, dilatarTinta(binarizarAdaptativa(g, c.width, c.height), c.width, c.height));
-    variantes.push({ nombre: 'recorte-adapt', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
+    variantes.push({ nombre: 'guia-adapt', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
   } catch (err) { /* seguimos */ }
 
-  // 5) Invertida (por si el papel es oscuro)
-  try {
-    const LADO = 1600;
-    const mayor = Math.max(img.width, img.height);
-    const factor = mayor > LADO ? LADO / mayor : 1;
-    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
-    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
-    const out = new Uint8Array(g.length);
-    for (let j = 0; j < g.length; j++) out[j] = 255 - g[j];
-    pintarGrises(canvas, out);
-    variantes.push({ nombre: 'invertida', data: canvas.toDataURL('image/jpeg', 0.95) });
-  } catch (err) { /* seguimos */ }
+  // 6) Reservas: binaria entera y negativo (papel oscuro)
+  try { variantes.push({ nombre: 'binaria', data: fotoReducida(img, 1000, 'otsu').toDataURL('image/jpeg', 0.95) }); } catch (err) { /* */ }
+  try { variantes.push({ nombre: 'invertida', data: fotoReducida(img, 900, 'negativo').toDataURL('image/jpeg', 0.95) }); } catch (err) { /* */ }
 
   return variantes;
 }
@@ -547,11 +517,13 @@ async function leerLoteDePapeleta(imageBase64) {
   for (let i = 0; i < variantes.length; i++) {
     const vari = variantes[i];
 
-    // Modo según variante: los recortes y el rayado casi siempre son UNA línea
-    const modos = vari.nombre === 'rayado'
-      ? [{ psm: '7', nombre: 'línea' }, { psm: '11', nombre: 'disperso' }, { psm: '6', nombre: 'bloque' }]
-      : vari.recorte
-        ? [{ psm: '7', nombre: 'línea' }, { psm: '8', nombre: 'palabra' }, { psm: '6', nombre: 'bloque' }]
+    // Modo según variante: los recortes y el rayado casi siempre son UNA línea.
+    // Dos pasadas por variante como máximo: con el paro temprano (conf >= 50)
+    // lo normal es acertar en la 1ª-3ª pasada y no llegar al resto.
+    const modos = vari.recorte
+      ? [{ psm: '7', nombre: 'línea' }, { psm: '8', nombre: 'palabra' }]
+      : vari.nombre === 'rayado'
+        ? [{ psm: '7', nombre: 'línea' }, { psm: '11', nombre: 'disperso' }]
         : [{ psm: '6', nombre: 'bloque' }, { psm: '11', nombre: 'disperso' }];
 
     for (const modo of modos) {

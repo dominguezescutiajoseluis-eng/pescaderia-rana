@@ -15,6 +15,8 @@ const ASSETS = [
   './js/invoices.js',
   './js/reports.js',
   './js/pdf.js',
+  './js/whatsapp.js',
+  './js/exportar.js',
   './js/app.js',
   './manifest.json',
   './assets/icon-192.png',

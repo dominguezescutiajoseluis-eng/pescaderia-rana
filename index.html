@@ -94,6 +94,9 @@
             <p>Diseña y emite facturas en el formato oficial de Pescadería Rana</p>
           </div>
           <div class="header-actions">
+            <button id="btn-whatsapp-invoice" class="btn btn-whatsapp" title="Enviar esta factura por WhatsApp Web">
+              <i class="fa-brands fa-whatsapp"></i> WhatsApp
+            </button>
             <button id="btn-save-invoice" class="btn btn-primary">
               <i class="fa-solid fa-floppy-disk"></i> Guardar Factura
             </button>
@@ -151,6 +154,14 @@
                 <label for="inv-client-province">Provincia</label>
                 <input type="text" id="inv-client-province" class="form-input" value="Málaga">
               </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label for="inv-client-phone"><i class="fa-brands fa-whatsapp"></i> Teléfono (para WhatsApp)</label>
+                <input type="tel" id="inv-client-phone" class="form-input" placeholder="Ej: 600 123 456">
+              </div>
+              <div class="form-group"></div>
             </div>
 
             <hr class="divider">
@@ -450,6 +461,7 @@
         </div>
       </section>
 
+      <!-- TAB 5bis: (el escáner avanzado se quitó; la configuración es la 6) -->
       <!-- TAB 6: CONFIGURACIÓN -->
       <section id="settings" class="tab-content">
         <div class="section-header">
@@ -460,6 +472,17 @@
         </div>
 
         <div class="settings-grid">
+          <div class="card">
+            <h3><i class="fa-solid fa-file-excel"></i> Exportar datos a Excel (CSV)</h3>
+            <p class="help-text">Descarga las tablas para abrir con Excel. Está aquí, en Configuración, a propósito: así no se exporta nada sin querer.</p>
+            <button id="btn-export-invoices-csv" class="btn btn-primary margin-top-sm">
+              <i class="fa-solid fa-file-csv"></i> Facturas (CSV)
+            </button>
+            <button id="btn-export-clients-csv" class="btn btn-secondary margin-top-sm full-width">
+              <i class="fa-solid fa-file-csv"></i> Clientes (CSV)
+            </button>
+          </div>
+
           <div class="card">
             <h3><i class="fa-solid fa-store"></i> Datos Emisor (Pescadería Rana)</h3>
             <div class="form-group">
@@ -595,9 +618,11 @@
   <script src="js/sync.js"></script>
   <script src="js/ocr.js"></script>
   <script src="js/clients.js"></script>
-  <script src="js/invoices.js"></script>
-  <script src="js/reports.js"></script>
-  <script src="js/pdf.js"></script>  <script src="js/app.js"></script>
+  <script src="js/invoices.js"></script>  <script src="js/reports.js"></script>
+  <script src="js/pdf.js"></script>
+  <script src="js/whatsapp.js"></script>
+  <script src="js/exportar.js"></script>
+  <script src="js/app.js"></script>
 
   <!-- Service Worker PWA: en la web da soporte sin conexión; en la app de
        escritorio (window.ES_ESCRITORIO, lo marca Electron) no se registra

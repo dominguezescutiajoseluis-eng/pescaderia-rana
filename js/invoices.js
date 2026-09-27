@@ -159,8 +159,30 @@ function addItemsToActiveInvoice(items) {
  * Elimina una línea de la factura activa por su índice
  */
 function removeInvoiceItem(index) {
+  const it = activeInvoiceItems[index];
+  if (!it) return;
+  if (!confirm('¿Quitar "' + it.concepto + '" de la factura?')) return;
   activeInvoiceItems.splice(index, 1);
   updateInvoicePreview();
+  showToast('Producto quitado de la factura');
+}
+
+/**
+ * Carga una línea en el formulario para editarla (la quita de la lista;
+ * al pulsar «Añadir Producto» vuelve con los datos corregidos)
+ */
+function editarItemFactura(index) {
+  const it = activeInvoiceItems[index];
+  if (!it) return;
+  document.getElementById('item-concept').value = it.concepto || '';
+  const loteInput = document.getElementById('item-lote');
+  if (loteInput) loteInput.value = it.lote || '';
+  document.getElementById('item-qty').value = it.cantidad || '';
+  document.getElementById('item-price').value = it.precio_kg || '';
+  activeInvoiceItems.splice(index, 1);
+  updateInvoicePreview();
+  document.getElementById('item-concept').focus();
+  showToast('Editando: pulsa «Añadir Producto» para guardar los cambios');
 }
 
 /**
@@ -216,9 +238,14 @@ function updateInvoicePreview() {
               <span>${formatNumber(item.cantidad)} kg x ${formatNumber(item.precio_kg)} €</span>
               <strong class="item-subtotal-val">${formatNumber(item.subtotal)} €</strong>
             </div>
-            <button class="icon-btn text-danger" onclick="removeInvoiceItem(${index})" title="Eliminar este producto">
-              <i class="fa-solid fa-trash-can"></i>
-            </button>
+            <div class="item-actions">
+              <button class="icon-btn" onclick="editarItemFactura(${index})" title="Editar este producto">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              <button class="icon-btn text-danger" onclick="removeInvoiceItem(${index})" title="Eliminar este producto">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>
+            </div>
           </div>
         `;
       });
@@ -288,9 +315,21 @@ async function handleSaveInvoice() {
     clientCif,
     clientAddress,
     clientProvince: clientProvince || 'Málaga',
+    clientPhone: document.getElementById('inv-client-phone') ? document.getElementById('inv-client-phone').value.trim() : '',
     items: activeInvoiceItems,
     totalFactura
   };
+
+  // Sin duplicados: si el número ya existe en OTRA factura, avisar
+  const todas = await getAllInvoices();
+  const repetida = todas.find(inv =>
+    String(inv.number) === String(number) &&
+    (!editingInvoiceId || inv.id !== Number(editingInvoiceId))
+  );
+  if (repetida) {
+    alert('Ya existe una factura con el número ' + number + ' (cliente: ' + (repetida.clientName || '-') + ').\nUsa otro número o edita la existente desde el Registro de Facturas.');
+    return;
+  }
 
   if (editingInvoiceId) {
     invoiceData.id = Number(editingInvoiceId);
@@ -319,6 +358,8 @@ function resetInvoiceForm() {
   document.getElementById('inv-client-address').value = '';
   document.getElementById('inv-client-province').value = 'Málaga';
   document.getElementById('inv-client-select').value = '';
+  const telInput = document.getElementById('inv-client-phone');
+  if (telInput) telInput.value = '';
   const loteInput = document.getElementById('item-lote');
   if (loteInput) loteInput.value = '';
   generateDefaultInvoiceNumber();
@@ -370,6 +411,9 @@ function renderInvoicesHistory(list) {
           <button class="btn btn-success btn-sm" onclick="printInvoiceFromHistory(${inv.id})" title="Imprimir / PDF">
             <i class="fa-solid fa-print"></i> PDF
           </button>
+          <button class="btn btn-sm btn-whatsapp" onclick="whatsappDesdeRegistro(${inv.id})" title="Enviar por WhatsApp Web">
+            <i class="fa-brands fa-whatsapp"></i>
+          </button>
           <button class="icon-btn" onclick="confirmDeleteInvoice(${inv.id})" title="Eliminar Factura">
             <i class="fa-solid fa-trash" style="color: #ef4444;"></i>
           </button>
@@ -378,6 +422,14 @@ function renderInvoicesHistory(list) {
     `;
   });
   tbody.innerHTML = html;
+}
+
+/**
+ * Envía por WhatsApp una factura guardada en el registro
+ */
+async function whatsappDesdeRegistro(id) {
+  const inv = await getInvoiceById(id);
+  if (inv) enviarFacturaWhatsApp(inv);
 }
 
 /**
@@ -395,6 +447,8 @@ async function editInvoiceInBuilder(id) {
     document.getElementById('inv-client-cif').value = inv.clientCif || '';
     document.getElementById('inv-client-address').value = inv.clientAddress || '';
     document.getElementById('inv-client-province').value = inv.clientProvince || 'Málaga';
+    const telInput = document.getElementById('inv-client-phone');
+    if (telInput) telInput.value = inv.clientPhone || '';
 
     activeInvoiceItems = inv.items || [];
     updateInvoicePreview();
@@ -410,14 +464,23 @@ async function editInvoiceInBuilder(id) {
  * Elimina una factura del registro
  */
 async function confirmDeleteInvoice(id) {
-  if (confirm('¿Estás seguro de eliminar esta factura del registro?')) {
-    try {
-      await deleteInvoice(id);
-      showToast('Factura eliminada del registro');
-      await loadInvoicesHistory();
-    } catch (err) {
-      alert('Error al eliminar factura: ' + err.message);
-    }
+  try {
+    const inv = await getInvoiceById(id);
+    if (!inv) return;
+    const items = (inv.items || []).length;
+    const mensaje = '¿ELIMINAR la factura Nº ' + inv.number + '?\n\n' +
+      'Cliente: ' + (inv.clientName || '-') + '\n' +
+      'Fecha: ' + formatDateDisplay(inv.date) + '\n' +
+      'Productos: ' + items + '\n' +
+      'Total: ' + formatNumber(inv.totalFactura) + ' €\n\n' +
+      'Esta acción no se puede deshacer (la copia de seguridad es lo único que podría recuperarla).';
+    if (!confirm(mensaje)) return;
+    await deleteInvoice(id);
+    showToast('Factura Nº ' + inv.number + ' eliminada');
+    await loadInvoicesHistory();
+    if (typeof renderSalesReport === 'function') renderSalesReport();
+  } catch (err) {
+    alert('Error al eliminar factura: ' + err.message);
   }
 }
 

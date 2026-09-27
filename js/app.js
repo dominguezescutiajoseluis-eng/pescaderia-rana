@@ -22,6 +22,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPDFModule();
   initSettingsModule();
   initReportsModule();
+  initWhatsAppModule();
+  initExportarModule();
 });
 
 /**

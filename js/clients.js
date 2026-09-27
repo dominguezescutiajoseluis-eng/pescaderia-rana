@@ -236,6 +236,8 @@ function assignClientToInvoice(client) {
   document.getElementById('inv-client-cif').value = client.cif || '';
   document.getElementById('inv-client-address').value = client.address || '';
   document.getElementById('inv-client-province').value = client.province || 'Málaga';
+  const telInput = document.getElementById('inv-client-phone');
+  if (telInput) telInput.value = client.phone || '';
 
   // Actualizar la vista previa de la factura inmediatamente
   if (typeof updateInvoicePreview === 'function') {

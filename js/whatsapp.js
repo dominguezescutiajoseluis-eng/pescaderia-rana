@@ -3,6 +3,12 @@
    - Botón «WhatsApp» en el facturador (envía la factura que se está creando)
    - Botón por cada factura en el Registro de Facturas
    El teléfono se guarda con la factura (campo clientPhone).
+
+   FLUJO PDF: al pulsar se genera el PDF OFICIAL de la factura (el mismo
+   documento que se imprime), se DESCARGA en el equipo y se abre WhatsApp Web
+   con el resumen escrito. WhatsApp Web no permite adjuntar ficheros por URL
+   (seguridad del navegador), así que el PDF se arrastra a la conversación
+   o se pulsa el clip 📎 y se elige de Descargas — 2 segundos.
    ========================================================================== */
 
 /** Normaliza un teléfono español al formato internacional 34XXXXXXXXX */
@@ -28,19 +34,109 @@ function construirMensajeFactura(inv) {
     `Cliente: ${inv.clientName || '-'}\n` +
     `\nProductos:\n${lineas}\n` +
     `\nTOTAL: ${formatNumber(inv.totalFactura)} €` +
-    `\n\nGracias por su confianza.`;
+    `\n\nAdjunto el PDF con la factura oficial. Gracias por su confianza.`;
 }
 
-/** Abre WhatsApp Web con el mensaje preparado (no necesita API ni clave) */
-function enviarFacturaWhatsApp(inv) {
+/** Rellena la zona de impresión (invoice-print-area) con los datos de una
+ *  factura concreta. Para la factura en curso vale updateInvoicePreview();
+ *  para una del REGISTRO hay que pintarla desde el objeto guardado. */
+function rellenarPlantillaDesdeFactura(inv) {
+  const pone = (id, valor) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = valor || '';
+  };
+  pone('pv-inv-number', inv.number);
+  let fecha = '';
+  if (inv.date) {
+    const p = String(inv.date).split('-');
+    fecha = p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : inv.date;
+  }
+  pone('pv-inv-date', fecha);
+  pone('pv-client-name', inv.clientName);
+  pone('pv-client-cif', inv.clientCif);
+  pone('pv-client-address', inv.clientAddress);
+  pone('pv-client-province', inv.clientProvince);
+  const tbody = document.getElementById('pv-items-body');
+  if (tbody) {
+    tbody.innerHTML = '';
+    (inv.items || []).forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${formatNumber(it.cantidad)}</td>` +
+        `<td>${it.concepto || ''}</td>` +
+        `<td>${it.lote || ''}</td>` +
+        `<td>${formatNumber(it.precio_kg)} €</td>` +
+        `<td>${formatNumber(it.subtotal)} €</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+  pone('pv-total-factura', `${formatNumber(inv.totalFactura || 0)} €`);
+}
+
+/** Genera el PDF oficial de una factura y lo devuelve como Blob.
+ *  Rellena la zona de impresión con los datos de la factura (misma vía que
+ *  «Imprimir / PDF»), genera con html2pdf y captura el resultado. */
+async function generarPdfFactura(inv) {
+  if (typeof html2pdf === 'undefined') {
+    throw new Error('El generador de PDF no está disponible.');
+  }
+  const contenedor = document.getElementById('invoice-print-area');
+  if (!contenedor) throw new Error('No encuentro la plantilla de factura.');
+
+  // Factura del formulario en curso: la vista previa ya está bien.
+  // Factura del registro: pintar la plantilla desde el objeto guardado.
+  if (inv.__desdeRegistro || !document.getElementById('inv-number') || document.getElementById('inv-number').value !== inv.number) {
+    rellenarPlantillaDesdeFactura(inv);
+  }
+
+  const nombre = `Factura_${String(inv.number).replace(/[\/\\]/g, '-')}_Pescaderia_Rana.pdf`;
+  const opt = {
+    margin: 10,
+    filename: nombre,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+  };
+
+  const blob = await html2pdf().set(opt).from(contenedor).outputPdf('blob');
+  return { blob, nombre };
+}
+
+/** Descarga el PDF en el equipo del usuario */
+function descargarPdfFactura(blob, nombre) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** Genera el PDF + abre WhatsApp Web con el mensaje listo */
+async function enviarFacturaWhatsApp(inv) {
   if (!inv) return;
   const tel = normalizarTelefonoWhatsApp(inv.clientPhone);
+  let pdfInfo = null;
+  try {
+    showToast('Generando el PDF de la factura…');
+    pdfInfo = await generarPdfFactura(inv);
+    descargarPdfFactura(pdfInfo.blob, pdfInfo.nombre);
+  } catch (err) {
+    console.warn('No se pudo generar el PDF, se envía solo el texto:', err);
+  }
+
   const texto = encodeURIComponent(construirMensajeFactura(inv));
   const url = tel
     ? `https://web.whatsapp.com/send?phone=${tel}&text=${texto}`
     : `https://web.whatsapp.com/send?text=${texto}`;
   window.open(url, '_blank');
-  showToast('Abriendo WhatsApp Web…');
+
+  if (pdfInfo) {
+    showToast(`PDF descargado (${pdfInfo.nombre}). En WhatsApp: 📎 adjuntar o arrastrar el PDF.`);
+  } else {
+    showToast('Abriendo WhatsApp Web…');
+  }
 }
 
 /** ---- Botón del facturador (factura actual) ---- */

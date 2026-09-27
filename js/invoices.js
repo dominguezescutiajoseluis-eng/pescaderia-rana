@@ -433,7 +433,10 @@ function renderInvoicesHistory(list) {
  */
 async function whatsappDesdeRegistro(id) {
   const inv = await getInvoiceById(id);
-  if (inv) enviarFacturaWhatsApp(inv);
+  if (inv) {
+    inv.__desdeRegistro = true; // el PDF se pinta desde el objeto guardado
+    enviarFacturaWhatsApp(inv);
+  }
 }
 
 /**

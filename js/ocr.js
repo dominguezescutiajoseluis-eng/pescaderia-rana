@@ -88,13 +88,16 @@ async function reajustarPesoPasada(pasada, delta) {
   await guardarAprendizaje();
 }
 
-/** Motor Tesseract local: worker, núcleo WASM y español van en vendor/ */
+/** Motor Tesseract local: worker, núcleo WASM y español van en vendor/.
+ *  Idioma INGLÉS para el motor de cifras: es más del doble de rápido que el
+ *  español y los lotes son letras y números (el spa LSTM es más pesado y
+ *  no aporta nada aquí). OEM 1 = LSTM. */
 function getOcrWorker() {
   if (typeof Tesseract === 'undefined') {
     return Promise.reject(new Error('Tesseract.js no está cargado.'));
   }
   if (!ocrWorkerPromise) {
-    ocrWorkerPromise = Tesseract.createWorker('spa', 1, {
+    ocrWorkerPromise = Tesseract.createWorker('eng', 1, {
       workerPath: 'vendor/tesseract/worker.min.js',
       corePath: 'vendor/tesseract/core',
       langPath: 'vendor/tesseract/lang',
@@ -613,9 +616,10 @@ async function leerLoteDePapeleta(imageBase64) {
   if (!ocrIAprimero) {
     const local = await leerLoteLocal(imageBase64);
     // Solo aceptamos la lectura local sin recurrir a la IA si fue MUY confiada
-    // (impresas nítidas: 88-92%). Con confianza más baja (manuscrito, fotos
-    // regulares) la IA corrige: es lenta pero acierta.
-    if (local.lote && (local.confianza || 0) >= 85 && local.fuenteSinDuda) {
+    // Y de una variante fiable Y el lote parece limpio (una sola pieza alfanumérica
+    // con separadores normales; "lL 49521" con espacios raros no vale).
+    const loteLimpio = local.lote && /^[A-Za-z]?[-\s]?[A-Za-z0-9\-/]{2,15}$/.test(local.lote) && !/\s.*\s/.test(local.lote);
+    if (local.lote && (local.confianza || 0) >= 70 && local.fuenteSinDuda && loteLimpio) {
       return local;
     }
     if (hayIA) {
@@ -1106,6 +1110,23 @@ function recibirFotoDelMovil(dataUrl) {
    AGENTE IA VISION (opcional): usa la clave guardada en Configuración.
    Si no hay clave o no hay conexión, el flujo cae al OCR local.
    ========================================================================== */
+/** Prepara la imagen PARA LA IA: la reduce a un lado máximo de 1280px (una
+ *  foto de móvil va por 3000-4000px y sobra: subirla entera es la mitad del
+ *  retraso). Suficiente para leer letra manuscrita, rapidísimo de subir. */
+async function prepararImagenParaIA(imageBase64) {
+  try {
+    const img = await cargarImagen(imageBase64);
+    const LADO = 1280;
+    const mayor = Math.max(img.width, img.height);
+    if (mayor <= LADO) return imageBase64;
+    const factor = LADO / mayor;
+    const { canvas } = canvasDeImagen(img, img.width * factor, img.height * factor);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch (err) {
+    return imageBase64; // sin reducir, mejor lento que romper
+  }
+}
+
 async function processWithGeminiAI(imageBase64) {
   const apiKey = await getSetting('gemini_api_key', '');
 
@@ -1113,7 +1134,8 @@ async function processWithGeminiAI(imageBase64) {
     throw new Error('Sin clave de Gemini configurada.');
   }
 
-  const cleanBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
+  const reducida = await prepararImagenParaIA(imageBase64);
+  const cleanBase64 = reducida.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
 
   const prompt = `Analiza la foto de esta papeleta/albarán de venta de pescado/marisco de Pescadería Rana.
 

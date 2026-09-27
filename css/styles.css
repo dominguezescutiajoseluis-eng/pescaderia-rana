@@ -249,6 +249,17 @@ body {
   .main-content {
     height: 100vh;
     padding: 1.25rem 1.75rem;
+    max-width: none;   /* en pantallas grandes ocupa TODO el ancho (adiós hueco derecho) */
+  }
+
+  /* En ventanas estrechas de escritorio, las filas de formulario dejan caer
+     los campos que no caben a la línea siguiente (sin scroll horizontal) */
+  .form-row {
+    flex-wrap: wrap;
+  }
+
+  .form-row .form-group {
+    min-width: 180px;
   }
 
   .section-header {
@@ -517,6 +528,8 @@ body {
 }
 
 .form-group {
+  min-width: 0; /* permite encoger dentro del flex sin desbordar */
+}
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -538,6 +551,7 @@ label {
 }
 
 .form-input {
+  width: 100%;              /* se adapta al ancho de su columna */
   padding: 0.65rem 0.85rem;
   border: 1.5px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -569,6 +583,16 @@ select option {
 .input-with-button {
   display: flex;
   gap: 0.5rem;
+}
+
+.input-with-button .form-input {
+  flex: 1 1 auto;
+  width: auto;      /* dentro del flex manda el reparto, no el 100% */
+  min-width: 0;     /* puede encoger sin empujar a los botones fuera */
+}
+
+.input-with-button .btn {
+  flex: 0 0 auto; /* los botones no se aplastan al estrechar la ventana */
 }
 
 .input-with-button select {

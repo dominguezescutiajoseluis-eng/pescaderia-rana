@@ -4,6 +4,9 @@
    ========================================================================== */
 
 :root {
+  /* La app está diseñada en claro: sin esto, el modo oscuro del sistema pinta
+     el texto de los campos en blanco y queda invisible sobre el fondo claro */
+  color-scheme: light;
   --primary-color: #0d5c75;
   --primary-hover: #09475c;
   --secondary-color: #1988a6;
@@ -374,6 +377,18 @@ label {
   font-family: inherit;
   transition: border-color 0.2s, box-shadow 0.2s;
   background-color: #f8fafc;
+  color: var(--text-primary);
+}
+
+.form-input::placeholder,
+.search-input-box input::placeholder {
+  color: var(--text-secondary);
+}
+
+select.form-input option,
+select option {
+  background-color: #ffffff;
+  color: #1e293b;
 }
 
 .form-input:focus {
@@ -845,6 +860,20 @@ label {
 .search-input-box input {
   padding-left: 2.5rem;
   width: 100%;
+  background-color: #f8fafc;
+  color: var(--text-primary);
+}
+
+/* Resto de campos sueltos (modales, filtros, etc.) */
+input,
+select,
+textarea {
+  color: var(--text-primary);
+  background-color: #ffffff;
+}
+
+.form-input:focus {
+  color: var(--text-primary);
 }
 
 /* Modals & Toasts */

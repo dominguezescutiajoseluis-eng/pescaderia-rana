@@ -182,7 +182,7 @@
                   <label for="item-lote"><i class="fa-solid fa-barcode"></i> N° Lote (trazabilidad)</label>
                   <div class="input-with-button">
                     <input type="text" id="item-lote" class="form-input" placeholder="Ej: L-2026-88">
-                    <button id="btn-ocr-lote" class="btn btn-secondary" title="Leer el nº de lote de la papeleta con la cámara (sin conexión)">
+                    <button id="btn-ocr-lote" class="btn btn-secondary" title="Leer el nº de lote de la papeleta: cámara (si el equipo tiene) o elegir una foto (sin conexión)">
                       <i id="ocr-lote-icon" class="fa-solid fa-camera-retro"></i>
                     </button>
                     <input type="file" id="ocr-lote-input" accept="image/*" capture="environment" style="display:none;">
@@ -521,6 +521,30 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- MODAL CÁMARA PARA EL Nº DE LOTE (trazabilidad) -->
+  <div id="camera-lote-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-camera-retro"></i> Foto de la papeleta</h3>
+        <button id="btn-cerrar-camara" class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="camera-lote-video-box">
+          <video id="camera-lote-video" autoplay playsinline muted></video>
+        </div>
+        <p class="help-text" id="camera-lote-estado">Abriendo cámara…</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-lote-archivo" class="btn btn-secondary">
+          <i class="fa-regular fa-image"></i> Elegir foto…
+        </button>
+        <button id="btn-capturar-lote" class="btn btn-primary" disabled>
+          <i class="fa-solid fa-camera"></i> Capturar
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- MODAL DE CLIENTE -->

@@ -139,21 +139,125 @@ async function leerLoteDePapeleta(imageBase64) {
   return { lote, fuente: 'OCR local', confianza };
 }
 
-/** ---- Interfaz: botón 📷 junto al campo N° Lote ---- */
+/** ---- Interfaz: botón 📷 junto al campo N° Lote ----
+ *  Abre directamente la cámara (la del portátil) en una ventana modal para
+ *  fotografiar la papeleta. Si no hay cámara o se deniega el permiso, cae al
+ *  selector de archivos. */
+let camaraStreamLote = null;
+
 function initOcrLote() {
   const btn = document.getElementById('btn-ocr-lote');
   const input = document.getElementById('ocr-lote-input');
+  const btnCapturar = document.getElementById('btn-capturar-lote');
+  const btnCerrar = document.getElementById('btn-cerrar-camara');
+  const btnArchivo = document.getElementById('btn-lote-archivo');
   if (!btn || !input) return;
 
   btn.addEventListener('click', () => {
-    if (!ocrLoteOcupado) input.click();
+    if (!ocrLoteOcupado) abrirCamaraLote();
   });
+  if (btnCapturar) btnCapturar.addEventListener('click', capturarFotoLote);
+  if (btnCerrar) btnCerrar.addEventListener('click', cerrarCamaraLote);
+  if (btnArchivo) {
+    btnArchivo.addEventListener('click', () => {
+      cerrarCamaraLote();
+      input.click();
+    });
+  }
 
   input.addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = ''; // permite repetir con el mismo fichero
     if (file) leerYRellenarLote(file);
   });
+
+  // Cerrar con la tecla Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && camaraStreamLote) cerrarCamaraLote();
+  });
+}
+
+/** ¿Este dispositivo tiene cámara? (sin pedir permiso) */
+async function hayCamaraDisponible() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return false;
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs.some(d => d.kind === 'videoinput');
+  } catch (err) {
+    return false;
+  }
+}
+
+async function abrirCamaraLote() {
+  // PC sin cámara: sin abrir el modal, pasar directo a elegir la foto
+  if (!(await hayCamaraDisponible())) {
+    showToast('Este equipo no tiene cámara: elige la foto de la papeleta.', 'info');
+    document.getElementById('ocr-lote-input').click();
+    return;
+  }
+
+  const modal = document.getElementById('camera-lote-modal');
+  const video = document.getElementById('camera-lote-video');
+  const estado = document.getElementById('camera-lote-estado');
+  const btnCapturar = document.getElementById('btn-capturar-lote');
+  if (!modal || !video) return;
+
+  modal.classList.remove('hidden');
+  if (estado) estado.textContent = 'Abriendo cámara…';
+  if (btnCapturar) btnCapturar.disabled = true;
+
+  try {
+    // facingMode 'user' = cámara frontal del portátil. Si falla, cualquier cámara.
+    camaraStreamLote = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (err1) {
+    try {
+      camaraStreamLote = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (err2) {
+      console.warn('Cámara no disponible:', err2);
+      cerrarCamaraLote();
+      showToast('No se pudo abrir la cámara: elige la foto de la papeleta.', 'error');
+      document.getElementById('ocr-lote-input').click();
+      return;
+    }
+  }
+
+  video.srcObject = camaraStreamLote;
+  if (estado) estado.textContent = 'Coloca la papeleta frente a la cámara y pulsa Capturar.';
+  if (btnCapturar) btnCapturar.disabled = false;
+}
+
+function capturarFotoLote() {
+  const video = document.getElementById('camera-lote-video');
+  if (!video || !video.videoWidth) {
+    showToast('La cámara aún no está lista. Espera un segundo.', 'error');
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  canvas.toBlob((blob) => {
+    cerrarCamaraLote();
+    if (blob) leerYRellenarLote(blob);
+  }, 'image/jpeg', 0.95);
+}
+
+function cerrarCamaraLote() {
+  if (camaraStreamLote) {
+    camaraStreamLote.getTracks().forEach(track => track.stop());
+    camaraStreamLote = null;
+  }
+  const video = document.getElementById('camera-lote-video');
+  if (video) video.srcObject = null;
+  const modal = document.getElementById('camera-lote-modal');
+  if (modal) modal.classList.add('hidden');
+  const estado = document.getElementById('camera-lote-estado');
+  if (estado) estado.textContent = 'Abriendo cámara…';
+  const btnCapturar = document.getElementById('btn-capturar-lote');
+  if (btnCapturar) btnCapturar.disabled = true;
 }
 
 async function leerYRellenarLote(fileOrBlob) {

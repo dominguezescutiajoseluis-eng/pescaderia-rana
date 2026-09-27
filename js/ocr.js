@@ -1075,8 +1075,10 @@ Luego extrae la lista de productos pesqueros en un array JSON plano con esta est
 El campo "lote" es el número de lote MÁS PROBABLE tal cual está escrito. El campo "sueltos" es un array con TODOS los demás números o códigos que veas en la foto (por si el principal está mal leído). Si no hay productos, devuelve un array con un único objeto que tenga solo "lote" y "sueltos".
 No agregues explicaciones ni bloques markdown. Responde ÚNICAMENTE con el array JSON.`;
 
-  // Modelos a probar: el nuevo flash primero, con reserva al 1.5 clásico
-  const modelos = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  // Modelos a probar: 'flash-latest' es un alias que Google mantiene siempre
+  // en la versión estable actual (evita quedarse anticuado), con reserva a
+  // una versión fija por si lo retiran en el futuro.
+  const modelos = ['gemini-flash-latest', 'gemini-2.5-flash'];
   let ultimoError = null;
 
   for (const modelo of modelos) {

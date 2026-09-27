@@ -196,6 +196,9 @@
                     <button id="btn-ocr-lote" class="btn btn-secondary" title="Leer el nº de lote de la papeleta: cámara (si el equipo tiene) o elegir una foto (sin conexión)">
                       <i id="ocr-lote-icon" class="fa-solid fa-camera-retro"></i>
                     </button>
+                    <button id="btn-lote-movil" class="btn btn-secondary hidden" title="Usar la cámara del MÓVIL: se abre un QR, lo enfocas con el móvil y la foto llega al PC por el WiFi">
+                      <i id="ocr-movil-icon" class="fa-solid fa-mobile-screen"></i>
+                    </button>
                     <input type="file" id="ocr-lote-input" accept="image/*" capture="environment" style="display:none;">
                   </div>
                   <p id="ocr-lote-status" class="help-text hidden" style="margin-top:6px;"></p>
@@ -570,6 +573,25 @@
     </div>
   </div>
 
+  <!-- MODAL PUENTE MÓVIL: QR para usar la cámara del móvil en el PC -->
+  <div id="puente-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-mobile-screen"></i> Usar la cámara del móvil</h3>
+        <button id="btn-cerrar-puente" class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body" style="text-align:center;">
+        <div id="puente-qr-box" style="display:flex;align-items:center;justify-content:center;min-height:230px;background:#fff;border-radius:12px;padding:10px;margin-bottom:10px;">
+          <span id="puente-qr-cargando" class="help-text">Preparando el QR…</span>
+        </div>
+        <p class="help-text" id="puente-estado">1) Abre la cámara del móvil y apunta al código QR. 2) Se abrirá una página: pulsa «Hacer la foto». 3) La foto llega aquí y se lee sola.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-puente-cerrar2" class="btn btn-secondary">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL DE CLIENTE -->
   <div id="client-modal" class="modal-backdrop hidden">
     <div class="modal-card">
@@ -614,6 +636,7 @@
   </div>
 
   <!-- JavaScript Modules -->
+  <script src="vendor/qrcode.min.js"></script>
   <script src="js/db.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/ocr.js"></script>

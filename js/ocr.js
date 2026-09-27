@@ -671,6 +671,20 @@ function initOcrLote() {
     if (file) leerYRellenarLote(file);
   });
 
+  // PUENTE MÓVIL: botón 📱 (solo se ve en la app de escritorio), cerrar y recepción
+  const btnMovil = document.getElementById('btn-lote-movil');
+  if (btnMovil) {
+    if (window.ES_ESCRITORIO && window.puenteMovil) btnMovil.classList.remove('hidden');
+    btnMovil.addEventListener('click', abrirPuenteMovil);
+  }
+  const btnCerrarPuente = document.getElementById('btn-cerrar-puente');
+  if (btnCerrarPuente) btnCerrarPuente.addEventListener('click', cerrarPuenteMovil);
+  const btnCerrarPuente2 = document.getElementById('btn-puente-cerrar2');
+  if (btnCerrarPuente2) btnCerrarPuente2.addEventListener('click', cerrarPuenteMovil);
+  if (window.puenteMovil && window.puenteMovil.alRecibirFoto) {
+    window.puenteMovil.alRecibirFoto(recibirFotoDelMovil);
+  }
+
   // Aprende cuando corriges el lote a mano tras una lectura
   const campoLote = document.getElementById('item-lote');
   if (campoLote) {
@@ -792,6 +806,8 @@ async function leerYRellenarLote(fileOrBlob) {
 
   try {
     const base64 = await new Promise((resolve, reject) => {
+      // Puede llegar un Blob/File (cámara o fichero) o un dataURL (foto del móvil)
+      if (typeof fileOrBlob === 'string' && fileOrBlob.startsWith('data:')) return resolve(fileOrBlob);
       const reader = new FileReader();
       reader.onload = ev => resolve(ev.target.result);
       reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
@@ -876,6 +892,62 @@ async function leerYRellenarLote(fileOrBlob) {
 }
 
 document.addEventListener('DOMContentLoaded', initOcrLote);
+
+/* ==========================================================================
+   PUENTE MÓVIL: la cámara del móvil como escáner del PC (solo escritorio)
+   El PC enseña un QR; el móvil abre la página del puente por el WiFi, hace
+   la foto y el PC la recibe y la pasa por el OCR automáticamente.
+   ========================================================================== */
+let puenteOcupado = false;
+
+async function abrirPuenteMovil() {
+  if (puenteOcupado) return;
+  puenteOcupado = true;
+  const modal = document.getElementById('puente-modal');
+  const qrBox = document.getElementById('puente-qr-box');
+  const estado = document.getElementById('puente-estado');
+  try {
+    if (typeof qrcode === 'undefined') throw new Error('Falta la librería del QR (vendor/qrcode.min.js).');
+    if (!window.ES_ESCRITORIO || !window.puenteMovil || !window.puenteMovil.iniciar) {
+      throw new Error('El puente del móvil está disponible en la app de escritorio.');
+    }
+    if (estado) estado.textContent = 'Abriendo el puente…';
+    if (modal) modal.classList.remove('hidden');
+    const r = await window.puenteMovil.iniciar();
+    // Generar el QR con la URL del puente
+    const qr = qrcode(0, 'M');
+    qr.addData(r.url);
+    qr.make();
+    const lado = Math.min(230, Math.max(160, window.innerWidth - 180));
+    const img = document.createElement('img');
+    img.alt = 'Código QR para conectar el móvil';
+    img.style.width = lado + 'px';
+    img.style.height = lado + 'px';
+    img.src = qr.createDataURL(8, 8);
+    if (qrBox) { qrBox.innerHTML = ''; qrBox.appendChild(img); }
+    if (estado) estado.textContent = '1) Abre la cámara del móvil y apunta al QR. 2) Pulsa «Hacer la foto» en la página que se abre. 3) La foto llega aquí y se lee sola. (Mismo WiFi)';
+  } catch (err) {
+    console.error('Puente móvil:', err);
+    if (modal) modal.classList.add('hidden');
+    showToast('No se pudo abrir el puente: ' + err.message, 'error');
+  } finally {
+    puenteOcupado = false;
+  }
+}
+
+function cerrarPuenteMovil() {
+  const modal = document.getElementById('puente-modal');
+  if (modal) modal.classList.add('hidden');
+  // La sesión del puente sigue abierta unos minutos por si se vuelve a abrir
+}
+
+/** Llega una foto del móvil (via Electron): leerla como las demás */
+function recibirFotoDelMovil(dataUrl) {
+  const modal = document.getElementById('puente-modal');
+  if (modal) modal.classList.add('hidden');
+  showToast('Foto recibida del móvil. Leyendo el lote…');
+  leerYRellenarLote(dataUrl);
+}
 
 /* ==========================================================================
    AGENTE IA VISION (opcional): usa la clave guardada en Configuración.

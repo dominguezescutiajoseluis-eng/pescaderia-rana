@@ -219,15 +219,29 @@ function binarizarAdaptativa(g, w, h) {
 }
 
 /** Recorta la ZONA DE LA GUÍA de la cámara (con margen) reescalada a un ancho
- *  determinado. La reducción va en dos pasos para no perder trazos finos de
- *  bolígrafo (un reescalado directo de 4000px a 1100px los borra). */
+ *  determinado. Reducir va en dos pasos para no perder trazos finos de
+ *  bolígrafo (un reescalado directo de 4000px a 1100px los borra); si el
+ *  recorte es pequeño se AMPLÍA hasta 2x: las papeletas con letra pequeña
+ *  necesitan píxeles para el OCR. */
 function recorteGuia(img, anchoDeseado) {
   const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;   // zona guía + margen
   const sx = Math.round(img.width * rx);
   const sy = Math.round(img.height * ry);
   const sw = Math.max(16, Math.round(img.width * rw));
   const sh = Math.max(16, Math.round(img.height * rh));
-  const ancho = Math.round(Math.min(anchoDeseado, sw));   // nunca ampliar de más
+  const ancho = Math.round(Math.min(anchoDeseado, sw * 2));  // amplía máx. 2x
+  if (sw <= ancho) {
+    // Ampliación (o tamaño exacto) en un solo paso
+    const c = document.createElement('canvas');
+    c.width = ancho;
+    c.height = Math.max(16, Math.round(ancho * sh / sw));
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return { c, ctx };
+  }
+  // Reducción en dos pasos (mitad, luego a destino)
   const paso1W = sw > ancho * 2 ? ancho * 2 : sw;
   const paso1H = Math.max(16, Math.round(paso1W * sh / sw));
   const paso1 = document.createElement('canvas');
@@ -236,7 +250,6 @@ function recorteGuia(img, anchoDeseado) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, paso1W, paso1H);
-  if (paso1W <= ancho) return { c: paso1, ctx };
   const c = document.createElement('canvas');
   c.width = ancho;
   c.height = Math.max(16, Math.round(ancho * sh / sw));
@@ -518,10 +531,10 @@ async function leerLoteDePapeleta(imageBase64) {
     const vari = variantes[i];
 
     // Modo según variante: los recortes y el rayado casi siempre son UNA línea.
-    // Dos pasadas por variante como máximo: con el paro temprano (conf >= 50)
+    // Dos-tres pasadas por variante como máximo: con el paro temprano (conf >= 50)
     // lo normal es acertar en la 1ª-3ª pasada y no llegar al resto.
     const modos = vari.recorte
-      ? [{ psm: '7', nombre: 'línea' }, { psm: '8', nombre: 'palabra' }]
+      ? [{ psm: '7', nombre: 'línea' }, { psm: '8', nombre: 'palabra' }, { psm: '6', nombre: 'bloque' }]
       : vari.nombre === 'rayado'
         ? [{ psm: '7', nombre: 'línea' }, { psm: '11', nombre: 'disperso' }]
         : [{ psm: '6', nombre: 'bloque' }, { psm: '11', nombre: 'disperso' }];

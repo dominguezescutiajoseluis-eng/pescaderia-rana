@@ -1,14 +1,25 @@
 /* ==========================================================================
    PESCADERÍA RANA - OCR DEL Nº DE LOTE (TRAZABILIDAD)
    Un único punto de OCR: el botón 📷 junto al campo «N° Lote» del facturador.
-   Toma una foto de la papeleta, la lee SIN CONEXIÓN (Tesseract empaquetado en
-   vendor/tesseract, con preprocesado de imagen) y rellena el número de lote.
-   Si el usuario ha guardado una clave de Gemini, se intenta primero la IA
-   (eso sí usa internet) y cae al OCR local si no está disponible.
+   Toma una foto de la papeleta y rellena el número de lote.
+
+   Estrategias (en orden):
+   1. IA Gemini Vision (si hay clave guardada y conexión): es la que mejor
+      lee CÓDIGOS ESCRITOS A MANO.
+   2. OCR local Tesseract con motor multi-pasada:
+      - Recorte de la zona de la guía de la cámara (donde se encuadra el lote)
+      - Binarización Otsu (umbral calculado para la foto, no fijo) y
+        binarización adaptativa para trazos de bolígrafo finos
+      - Modo "línea única" (PSM 7) y "palabra única" (PSM 8)
+      - CORRECCIÓN AUTOMÁTICA: si el recorte no da nada, se prueban los
+        números sueltos detectados en toda la foto
+      - CONSENSO: un lote solo se acepta directo si 2 pasadas lo leen igual;
+        si no, se presentan candidatos al usuario con un clic
    ========================================================================== */
 
 let ocrLoteOcupado = false;
 let ocrWorkerPromise = null;
+let ocrUltimosCandidatos = [];   // para los chips «¿quisiste decir…?»
 
 /** Motor Tesseract local: worker, núcleo WASM y español van en vendor/ */
 function getOcrWorker() {
@@ -28,75 +39,344 @@ function getOcrWorker() {
   return ocrWorkerPromise;
 }
 
-/**
- * Preprocesado de imagen para el OCR: reescala (las fotos de móvil suelen
- * venir pequeñas), pasa a gris, estira el contraste y oscurece la tinta.
- * Si algo falla, devuelve la imagen original (nunca rompe el escaneo).
- */
-function preprocesarImagen(imageBase64) {
-  return new Promise((resolve) => {
+function cargarImagen(src) {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => {
-      try {
-        const LADO_GRANDE = 1700;
-        const mayor = Math.max(img.width, img.height);
-        let factor = 1;
-        if (mayor > LADO_GRANDE) factor = LADO_GRANDE / mayor;
-        else if (mayor < 900) factor = Math.min(3, 1200 / mayor);
-        const w = Math.max(1, Math.round(img.width * factor));
-        const h = Math.max(1, Math.round(img.height * factor));
-
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        const ctx = c.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, w, h);
-
-        const datos = ctx.getImageData(0, 0, w, h);
-        const p = datos.data;
-        const grises = new Uint8ClampedArray(w * h);
-        let min = 255, max = 0;
-        for (let i = 0, j = 0; i < p.length; i += 4, j++) {
-          const g = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0;
-          grises[j] = g;
-          if (g < min) min = g;
-          if (g > max) max = g;
-        }
-        const rango = Math.max(1, max - min);
-        for (let i = 0, j = 0; i < p.length; i += 4, j++) {
-          let g = ((grises[j] - min) * 255) / rango;
-          if (g < 110) g = g * 0.55; // engordar la tinta (trazos finos de bolígrafo)
-          p[i] = p[i + 1] = p[i + 2] = g;
-          p[i + 3] = 255;
-        }
-        ctx.putImageData(datos, 0, 0);
-        resolve(c.toDataURL('image/jpeg', 0.95));
-      } catch (err) {
-        console.warn('Preprocesado no disponible, se usa la imagen original:', err);
-        resolve(imageBase64);
-      }
-    };
-    img.onerror = () => resolve(imageBase64);
-    img.src = imageBase64;
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
   });
 }
 
+/** Dibuja la imagen en un canvas devolviendo (ctx, w, h) para trabajar sobre ella */
+function canvasDeImagen(img, w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return { canvas: c, ctx };
+}
+
+/** Grises 0..255 de un canvas (Uint8Array w*h) */
+function grisesDeCanvas(ctx, w, h) {
+  const p = ctx.getImageData(0, 0, w, h).data;
+  const g = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < p.length; i += 4, j++) {
+    g[j] = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0;
+  }
+  return g;
+}
+
+/** Sube/baja el contraste engordando la tinta oscura (trazos finos de boli) */
+function engordarTinta(g, w, h, umbralTinta = 110, factor = 0.55) {
+  let min = 255, max = 0;
+  for (let j = 0; j < g.length; j++) {
+    if (g[j] < min) min = g[j];
+    if (g[j] > max) max = g[j];
+  }
+  const rango = Math.max(1, max - min);
+  const out = new Uint8Array(g.length);
+  for (let j = 0; j < g.length; j++) {
+    let v = ((g[j] - min) * 255) / rango;
+    if (v < umbralTinta) v = v * factor;
+    out[j] = v;
+  }
+  return out;
+}
+
+/** Escribe un array de grises en un canvas (RGB iguales) */
+function pintarGrises(canvas, g) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const datos = ctx.createImageData(canvas.width, canvas.height);
+  const p = datos.data;
+  for (let j = 0, i = 0; j < g.length; j++, i += 4) {
+    p[i] = p[i + 1] = p[i + 2] = g[j];
+    p[i + 3] = 255;
+  }
+  ctx.putImageData(datos, 0, 0);
+  return canvas;
+}
+
+/** Umbral de Otsu: separa tinta/papel calculado sobre el histograma real */
+function umbralOtsu(g) {
+  const hist = new Array(256).fill(0);
+  for (let j = 0; j < g.length; j++) hist[g[j]]++;
+  const total = g.length;
+  let sumaTotal = 0;
+  for (let t = 0; t < 256; t++) sumaTotal += t * hist[t];
+  let sumaB = 0, pesoB = 0, mejor = 0, mejorVar = -1;
+  for (let t = 0; t < 256; t++) {
+    pesoB += hist[t];
+    if (!pesoB) continue;
+    const pesoF = total - pesoB;
+    if (!pesoF) break;
+    sumaB += t * hist[t];
+    const mediaB = sumaB / pesoB;
+    const mediaF = (sumaTotal - sumaB) / pesoF;
+    const varEntre = pesoB * pesoF * (mediaB - mediaF) * (mediaB - mediaF);
+    if (varEntre > mejorVar) { mejorVar = varEntre; mejor = t; }
+  }
+  return mejor;
+}
+
+/** Binarización adaptativa por bloque: aguanta sombras y papel arrugado */
+function binarizarAdaptativa(g, w, h) {
+  const out = new Uint8Array(g.length);
+  const medio = 9;             // ventana 9x9 de medias locales
+  const half = (medio - 1) / 2;
+  const C = 12;                // margen bajo el umbral local
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let suma = 0, n = 0;
+      for (let dy = -half; dy <= half; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -half; dx <= half; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          suma += g[yy * w + xx];
+          n++;
+        }
+      }
+      out[y * w + x] = g[y * w + x] < (suma / n) - C ? 0 : 255;
+    }
+  }
+  return out;
+}
+
+/**
+ * Genera TODAS las variantes de una misma foto para maximizar la lectura.
+ * - full:     foto entera (por si el papel se encuadra lejos)
+ * - guia:     recorte de la zona de la guía de la cámara, ampliado (la clave
+ *             para manuscrito: el lote ocupa casi todo el recorte)
+ * - binaria:  foto entera con umbral Otsu
+ * - adapt:    recorte guía con binarización adaptativa (sombras/pliegues)
+ * - invertida: foto entera en negativo
+ */
+async function variantesDeImagen(imageBase64) {
+  const variantes = [];
+  let img;
+  try {
+    img = await cargarImagen(imageBase64);
+  } catch (err) {
+    return [imageBase64]; // nunca romper el escaneo
+  }
+
+  // 0) ANTI-RAYADO PRIMERO: la combinación que mejor funciona con bolígrafo
+  //    sobre papel de cuaderno (binarizar + quitar rayas + engordar trazos)
+  try {
+    const LADO = 1800;
+    const mayor = Math.max(img.width, img.height);
+    const factor = mayor > LADO ? LADO / mayor : 1;
+    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
+    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
+    g = binarizarOtsu(g);
+    g = quitarRayasHorizontales(g, canvas.width, canvas.height);
+    g = dilatarTinta(g, canvas.width, canvas.height);
+    pintarGrises(canvas, g);
+    variantes.push({ nombre: 'rayado', data: canvas.toDataURL('image/jpeg', 0.95) });
+  } catch (err) { /* seguimos */ }
+
+  // 1) Foto entera mejorada (grises + contraste + tinta engordada)
+  try {
+    const LADO = 2000;
+    const mayor = Math.max(img.width, img.height);
+    let factor = mayor > LADO ? LADO / mayor : (mayor < 1000 ? Math.min(3, 1400 / mayor) : 1);
+    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
+    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
+    g = engordarTinta(g, canvas.width, canvas.height);
+    pintarGrises(canvas, g);
+    variantes.push({ nombre: 'completa', data: canvas.toDataURL('image/jpeg', 0.95) });
+  } catch (err) {
+    variantes.push({ nombre: 'completa', data: imageBase64 });
+  }
+
+  // 2) Recorte de la ZONA DE LA GUÍA de la cámara (lote 18-82% x 32-68%)
+  //    con margen holgado, reescalado en GRANDE (manuscrito necesita píxeles)
+  try {
+    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44; // zona guía + margen
+    const sx = Math.round(img.width * rx);
+    const sy = Math.round(img.height * ry);
+    const sw = Math.max(16, Math.round(img.width * rw));
+    const sh = Math.max(16, Math.round(img.height * rh));
+    // el recorte final sube hasta 1600px de ancho
+    const escala = Math.min(3, Math.max(1, 1600 / sw));
+    const c = document.createElement('canvas');
+    c.width = Math.round(sw * escala);
+    c.height = Math.round(sh * escala);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    variantes.push({ nombre: 'recorte-guia', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
+
+    // 2b) mismo recorte con Otsu
+    const g = grisesDeCanvas(ctx, c.width, c.height);
+    const c2 = document.createElement('canvas');
+    c2.width = c.width; c2.height = c.height;
+    pintarGrises(c2, binarizarOtsu(g));
+    variantes.push({ nombre: 'recorte-guia-otsu', data: c2.toDataURL('image/jpeg', 0.95), recorte: true });
+  } catch (err) { /* sin recorte, seguimos */ }
+
+  // 3) Binaria (Otsu) de la foto entera
+  try {
+    const LADO = 1800;
+    const mayor = Math.max(img.width, img.height);
+    const factor = mayor > LADO ? LADO / mayor : 1;
+    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
+    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
+    pintarGrises(canvas, binarizarOtsu(g));
+    variantes.push({ nombre: 'binaria', data: canvas.toDataURL('image/jpeg', 0.95) });
+  } catch (err) { /* seguimos */ }
+
+  // 3c) CIFRAS: recorte guía binarizado, sin rayas y con trazos engordados
+  try {
+    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;
+    const sx = Math.round(img.width * rx);
+    const sy = Math.round(img.height * ry);
+    const sw = Math.max(16, Math.round(img.width * rw));
+    const sh = Math.max(16, Math.round(img.height * rh));
+    const escala = Math.min(3, Math.max(1, 1600 / sw));
+    const c = document.createElement('canvas');
+    c.width = Math.round(sw * escala);
+    c.height = Math.round(sh * escala);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    let g = grisesDeCanvas(ctx, c.width, c.height);
+    g = engordarTinta(g, c.width, c.height);
+    g = binarizarOtsu(g);
+    g = quitarRayasHorizontales(g, c.width, c.height);
+    g = dilatarTinta(g, c.width, c.height);
+    pintarGrises(c, g);
+    variantes.push({ nombre: 'cifras', data: c.toDataURL('image/jpeg', 0.95), recorte: true, soloCifras: true });
+  } catch (err) { /* seguimos */ }
+
+  // 4) Binarización adaptativa del recorte guía (pliegues/sombras)
+  try {
+    const rx = 0.10, ry = 0.28, rw = 0.80, rh = 0.44;
+    const sx = Math.round(img.width * rx);
+    const sy = Math.round(img.height * ry);
+    const sw = Math.max(16, Math.round(img.width * rw));
+    const sh = Math.max(16, Math.round(img.height * rh));
+    const escala = Math.min(3, Math.max(1, 1400 / sw));
+    const c = document.createElement('canvas');
+    c.width = Math.round(sw * escala);
+    c.height = Math.round(sh * escala);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    let g = grisesDeCanvas(ctx, c.width, c.height);
+    pintarGrises(c, dilatarTinta(binarizarAdaptativa(g, c.width, c.height), c.width, c.height));
+    variantes.push({ nombre: 'recorte-adapt', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
+  } catch (err) { /* seguimos */ }
+
+  // 5) Invertida (por si el papel es oscuro)
+  try {
+    const LADO = 1600;
+    const mayor = Math.max(img.width, img.height);
+    const factor = mayor > LADO ? LADO / mayor : 1;
+    let { canvas, ctx } = canvasDeImagen(img, img.width * factor, img.height * factor);
+    let g = grisesDeCanvas(ctx, canvas.width, canvas.height);
+    const out = new Uint8Array(g.length);
+    for (let j = 0; j < g.length; j++) out[j] = 255 - g[j];
+    pintarGrises(canvas, out);
+    variantes.push({ nombre: 'invertida', data: canvas.toDataURL('image/jpeg', 0.95) });
+  } catch (err) { /* seguimos */ }
+
+  return variantes;
+}
+
+function binarizarOtsu(g) {
+  const u = umbralOtsu(g);
+  const out = new Uint8Array(g.length);
+  for (let j = 0; j < g.length; j++) out[j] = g[j] <= u ? 0 : 255;
+  return out;
+}
+
+/** Quita las líneas horizontales del PAPEL RAYADO (sobre imagen binarizada:
+ *  tinta=0, papel=255). Una fila donde más de la mitad es tinta y corre de
+ *  lado a lado es una raya del cuaderno, no una cifra. */
+function quitarRayasHorizontales(g, w, h) {
+  const out = new Uint8Array(g);
+  for (let y = 0; y < h; y++) {
+    let oscuros = 0;
+    for (let x = 0; x < w; x++) if (g[y * w + x] === 0) oscuros++;
+    if (oscuros > w * 0.55) {
+      for (let x = 0; x < w; x++) {
+        out[y * w + x] = 255;
+        if (y > 0) out[(y - 1) * w + x] = 255;
+        if (y < h - 1) out[(y + 1) * w + x] = 255;
+      }
+      y++; // la vecina ya quedó limpiada
+    }
+  }
+  return out;
+}
+
+/** Dilatación morfológica de la tinta: engorda los trazos finos de bolígrafo
+ *  (filtro mínimo 3x3 sobre los grises). Clave para que el LSTM vea el palo
+ *  de un «1» o el rabillo de una cifra escrita a mano. */
+function dilatarTinta(g, w, h) {
+  const out = new Uint8Array(g.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 255;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        const fila = yy * w;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const q = g[fila + xx];
+          if (q < v) v = q;
+        }
+      }
+      out[y * w + x] = v;
+    }
+  }
+  return out;
+}
+
 /** Busca el nº de lote en texto libre (formatos: "Lote: L-4521", "Lote #849",
- *  "L. 4521", "L-4521", "Nº 104", "LOTE 2026-05") */
+ *  "L. 4521", "L-4521", "Nº 104", "LOTE 2026-05", "codigo 4521"). Si la línea
+ *  dice "lote/código/cod" y hay UN número suelto, se acepta directamente. */
 function extraerLoteDeTexto(texto) {
-  if (!texto) return '';
+  if (!texto) return { lote: '', sueltos: [] };
+  const t = String(texto);
+
   const patrones = [
-    /(?:lote|lot)\s*(?:n[ºo°])?\s*[:#.=]?\s*([A-Za-z0-9][A-Za-z0-9\-\/.]{1,15})/i,
-    /\b([A-Za-z]{1,2}-\d{2,8})\b/,
+    /(?:lote|lot|cod(?:igo)?|batch)(?![a-z])\s*(?:n[ºo°])?\s*[:#=.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-\/.]{1,15})/i,
+    /\b([A-Za-z]{1,3}[-\s]?\d{2,8})\b/,
     /\b#\s?(\d{2,8})\b/,
     /\bn[ºo°]\s*(\d{3,8})\b/i,
   ];
   for (const re of patrones) {
-    const m = String(texto).match(re);
-    if (m && m[1]) return m[1].replace(/[.,;:]+$/, '').trim();
+    const m = t.match(re);
+    if (m && m[1]) return { lote: m[1].replace(/[.,;:]+$/, '').trim(), sueltos: [] };
   }
-  return '';
+
+  // Números "sueltos" de 2-8 cifras tal cual se leyeron (posibles lotes
+  // solo numéricos). NO se recortan: un 4521 mal recortado daría 457.
+  const sueltos = [];
+  const reNum = /\b\d{2,8}\b/g;
+  let m2;
+  while ((m2 = reNum.exec(t)) !== null) sueltos.push(m2[0]);
+
+  // Si el texto menciona lote/código pero no casó ningún patrón con formato,
+  // y solo hay un número en la foto: es el lote casi seguro
+  const mencionaLote = /lot|cod|batch|n[ºo°]/i.test(t);
+  const unicos = [...new Set(sueltos)];
+  if (mencionaLote && unicos.length === 1) {
+    return { lote: unicos[0], sueltos: unicos };
+  }
+  return { lote: '', sueltos: unicos };
 }
 
 /** Quita el prefijo "Lote" si la IA lo devuelve con palabra incluida */
@@ -105,31 +385,28 @@ function normalizarLote(valor) {
   return String(valor).replace(/^lote\s*[:#.=]?\s*/i, '').replace(/[.,;:]+$/, '').trim();
 }
 
-/** Extrae el lote con el Agente IA (requiere clave guardada y conexión) */
-async function leerLoteConIA(imageBase64) {
-  const items = await processWithGeminiAI(imageBase64);
-  if (items && items.length) {
-    const candidato = normalizarLote(items[0].lote) || extraerLoteDeTexto(items[0].concepto || '');
-    if (candidato) return candidato;
-  }
-  return '';
-}
-
 /**
- * Corrige confusiones típicas del OCR cuando el lote debe llevar números:
- * O→0, I/l→1, S→5, B→8, Z→2, g→9, T→7… solo si el patrón del lote es alfanumérico
+ * Corrige confusiones típicas del OCR cuando el lote mezcla letras y números:
+ * O→0, I/l→1, S→5, B→8, Z→2, g→9, T→7, G→6.
+ * Además arregla el caso habitual "l4521"/"14521" → "L-4521": la L inicial se
+ * lee como l o como 1, y los manuscritos casi nunca llevan el guión.
  */
 function corregirLoteOcr(valor) {
   if (!valor) return valor;
-  let v = valor;
-  const etiqueta = v.match(/^(lote|lot|l)[-\s.:#]*/i);
+  let v = String(valor).trim();
+  v = v.replace(/^[lL]ote\s*[:#.=]?\s*/, '');
+
+  // "l4521" / "L 4521" → "L-4521" (prefijo L pegado a cifras)
+  const prefijoL = v.match(/^[lL][\s]?(?=\d)/);
+  if (prefijoL) v = 'L-' + v.slice(prefijoL[0].length);
+  // "14521" con 5+ cifras donde la primera puede ser una L mal leída → L-4521
+  else if (/^1\d{4,7}$/.test(v)) v = 'L-' + v.slice(1);
+
+  const etiqueta = v.match(/^([lL])[-\s.:#]?/);
   const cuerpo = etiqueta ? v.slice(etiqueta[0].length) : v;
-  // Solo "des-confundir" si el cuerpo tiene letras y números mezclados
   if (/[A-Za-z]/.test(cuerpo) && /\d/.test(cuerpo)) {
-    // Mantener guiones y barras; corregir dentro de cada bloque
-    v = etiqueta[0] + cuerpo.replace(/[A-Za-z0-9]+/g, (bloque) => {
-      if (!/\d/.test(bloque)) return bloque;          // bloque solo letras: deja
-      if (!/[A-Za-z]/.test(bloque)) return bloque;    // bloque solo números: deja
+    v = (etiqueta ? etiqueta[0] : '') + cuerpo.replace(/[A-Za-z0-9]+/g, (bloque) => {
+      if (!/\d/.test(bloque) || !/[A-Za-z]/.test(bloque)) return bloque;
       return bloque.replace(/O/g, '0').replace(/o/g, '0')
         .replace(/I/g, '1').replace(/l/g, '1')
         .replace(/S/g, '5').replace(/B/g, '8')
@@ -140,77 +417,52 @@ function corregirLoteOcr(valor) {
   return v;
 }
 
-/**
- * Genera variantes de la imagen para maximizar la lectura:
- * la original preprocesada, el recorte central (donde está el lote en la
- * guía de la cámara), una binarizada y una invertida.
- */
-async function variantesDeImagen(imageBase64) {
-  const variantes = [];
-  const base = await preprocesarImagen(imageBase64);
-  variantes.push(base);
-
-  const crearVariante = (img, modo, zoom) => new Promise((resolve) => {
-    try {
-      const c = document.createElement('canvas');
-      const zx = zoom > 1 ? Math.round(img.width * (1 / zoom)) : img.width;
-      const zy = zoom > 1 ? Math.round(img.height * (1 / zoom)) : img.height;
-      const sx = Math.round((img.width - zx) / 2);
-      const sy = Math.round((img.height - zy) / 2);
-      c.width = zoom > 1 ? img.width : img.width;
-      c.height = zoom > 1 ? img.height : img.height;
-      const ctx = c.getContext('2d');
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, sx, sy, zx, zy, 0, 0, c.width, c.height);
-      const datos = ctx.getImageData(0, 0, c.width, c.height);
-      const p = datos.data;
-      for (let i = 0; i < p.length; i += 4) {
-        const g = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114);
-        let v;
-        if (modo === 'binaria') v = g < 140 ? 0 : 255;
-        else if (modo === 'invertida') v = 255 - g;
-        else v = g;
-        p[i] = p[i + 1] = p[i + 2] = v;
-      }
-      ctx.putImageData(datos, 0, 0);
-      resolve(c.toDataURL('image/jpeg', 0.95));
-    } catch (err) {
-      resolve(null);
-    }
-  });
-
-  try {
-    const img = await cargarImagen(base);
-    const centro = await crearVariante(img, 'normal', 1.8);      // zona central ampliada
-    if (centro) variantes.unshift(centro);
-    const binaria = await crearVariante(img, 'binaria', 1);       // blanco y negro puro
-    if (binaria) variantes.push(binaria);
-    const invertida = await crearVariante(img, 'invertida', 1);   // texto claro sobre oscuro
-    if (invertida) variantes.push(invertida);
-  } catch (err) { /* con la base basta */ }
-
-  return variantes;
+function sonLotesIguales(a, b) {
+  return String(a).toLowerCase().replace(/[\s\-_#.]/g, '') === String(b).toLowerCase().replace(/[\s\-_#.]/g, '');
 }
 
-function cargarImagen(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
+/** Peso del voto de una pasada según su confianza: las lecturas confiadas
+ *  (p. ej. modo «palabra» sobre el recorte) mandan sobre las de relleno,
+ *  que casi siempre leen ruido. */
+function pesoVoto(conf) {
+  if (conf >= 60) return 3;
+  if (conf >= 35) return 2;
+  return 1;
+}
+
+/** Añade un candidato evitando duplicados "fuzzys" */
+function pushCandidato(lista, lote, confianza, peso = 1) {
+  if (!lote) return;
+  const limpio = normalizarLote(corregirLoteOcr(lote));
+  if (!limpio || limpio.length < 2 || limpio.length > 20) return;
+  const ya = lista.find(c => sonLotesIguales(c.lote, limpio));
+  if (ya) {
+    ya.votos += peso;
+    ya.confianza = Math.max(ya.confianza, confianza);
+  } else {
+    lista.push({ lote: limpio, votos: peso, confianza });
+  }
+}
+
+/** Extrae el lote con el Agente IA (requiere clave guardada y conexión).
+ *  Devuelve también todos los "posibles lotes" que vea en la foto. */
+async function leerLoteConIA(imageBase64) {
+  const resultado = await processWithGeminiAI(imageBase64);
+  if (resultado && resultado.lote) return resultado;
+  return { lote: '', sueltos: [] };
 }
 
 /**
- * Lee la papeleta con varias pasadas hasta encontrar el lote.
- * IA opcional primero (si hay clave y red); OCR local con variantes después.
+ * Lee la papeleta. IA opcional primero (si hay clave y red); OCR local con
+ * motor multi-pasada después. Devuelve { lote, fuente, confianza, sueltos }.
  */
 async function leerLoteDePapeleta(imageBase64) {
   const apiKey = await getSetting('gemini_api_key', '');
   if (apiKey && navigator.onLine) {
     try {
-      const loteIA = await leerLoteConIA(imageBase64);
-      if (loteIA) return { lote: loteIA, fuente: 'IA Vision', confianza: null };
+      const r = await leerLoteConIA(imageBase64);
+      if (r.lote) return { lote: r.lote, fuente: 'IA Vision (Gemini)', confianza: null, sueltos: r.sueltos || [] };
+      if (r.sueltos && r.sueltos.length) return { lote: '', fuente: 'IA Vision (Gemini)', confianza: null, sueltos: r.sueltos };
     } catch (err) {
       console.warn('IA no disponible, usando OCR local:', err.message);
     }
@@ -218,31 +470,80 @@ async function leerLoteDePapeleta(imageBase64) {
 
   const worker = await getOcrWorker();
   const variantes = await variantesDeImagen(imageBase64);
-  let mejor = { lote: '', confianza: 0, texto: '' };
+  const candidatos = [];
+  const sueltosGlobal = new Set();
+  const pasos = [];
 
   for (let i = 0; i < variantes.length; i++) {
-    try {
-      const result = await worker.recognize(variantes[i]);
-      const conf = (result.data && typeof result.data.confidence === 'number') ? result.data.confidence : 0;
-      const texto = result.data.text || '';
-      const lote = extraerLoteDeTexto(texto);
-      console.log('OCR pasada ' + (i + 1) + ': conf=' + Math.round(conf) + '% lote=' + (lote || '—'));
-      if (lote) {
-        return { lote: corregirLoteOcr(lote), fuente: 'OCR local (pasada ' + (i + 1) + ')', confianza: Math.round(conf) };
+    const vari = variantes[i];
+
+    // Modo según variante: los recortes y el rayado casi siempre son UNA línea
+    const modos = vari.nombre === 'rayado'
+      ? [{ psm: '7', nombre: 'línea' }, { psm: '11', nombre: 'disperso' }, { psm: '6', nombre: 'bloque' }]
+      : vari.recorte
+        ? [{ psm: '7', nombre: 'línea' }, { psm: '8', nombre: 'palabra' }, { psm: '6', nombre: 'bloque' }]
+        : [{ psm: '6', nombre: 'bloque' }, { psm: '11', nombre: 'disperso' }];
+
+    for (const modo of modos) {
+      pasos.push(vari.nombre + '·' + modo.nombre);
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: modo.psm,
+          preserve_interword_spaces: '1',
+        });
+        const result = await worker.recognize(vari.data);
+        const conf = (result.data && typeof result.data.confidence === 'number') ? result.data.confidence : 0;
+        const texto = result.data.text || '';
+        const { lote, sueltos } = extraerLoteDeTexto(texto);
+        console.log('OCR ' + vari.nombre + '/' + modo.nombre + ': conf=' + Math.round(conf) + '% lote=' + (lote || '—') + ' sueltos=[' + sueltos.join(', ') + ']');
+        pushCandidato(candidatos, lote, Math.round(conf), pesoVoto(Math.round(conf)));
+        for (const s of sueltos) {
+          if (s.length >= 2) {
+            // En un recorte el lote es lo ÚNICO que hay: sus números valen
+            // confianza plena; en la foto entera son solo posibles lotes.
+            const confS = vari.recorte ? Math.round(conf) : Math.max(0, Math.round(conf) - 20);
+            pushCandidato(candidatos, s, confS, pesoVoto(Math.round(conf)));
+            sueltosGlobal.add(s);
+          }
+        }
+        // Éxito fuerte: formato claro (letras-guión) o lectura confiada → parar.
+        // Las variantes más preparadas van primero: su lectura manda.
+        if (lote && (/[A-Za-z]-\d/.test(lote) || conf >= 50)) {
+          await restaurarWorker(worker);
+          return { lote: corregirLoteOcr(lote), fuente: 'OCR local (' + vari.nombre + ', ' + modo.nombre + ')', confianza: Math.round(conf), sueltos: [...sueltosGlobal] };
+        }
+      } catch (err) {
+        console.warn('OCR ' + vari.nombre + '/' + modo.nombre + ' falló:', err.message);
       }
-      if (conf > mejor.confianza) mejor = { lote: '', confianza: conf, texto };
-    } catch (err) {
-      console.warn('OCR pasada ' + (i + 1) + ' falló:', err.message);
     }
   }
 
-  // Último recurso: buscar cualquier secuencia alfanumérica tras "lote" en el
-  // texto con más confianza, aunque el formato sea raro
-  if (mejor.texto) {
-    const suelto = mejor.texto.match(/([A-Za-z]{1,3}[-\s]?\d{3,8})/);
-    if (suelto) return { lote: corregirLoteOcr(suelto[1]), fuente: 'OCR local (aprox)', confianza: Math.round(mejor.confianza) };
+  await restaurarWorker(worker);
+
+  // ---- Decisión final por consenso ----
+  // Las lecturas FUERTES (conf >= 45%) mandan: evita que muchas pasadas
+  // débiles llenas de ruido entierren la única pasada que leyó bien.
+  const fuertes = candidatos.filter(c => c.confianza >= 45);
+  const pool = fuertes.length ? fuertes : candidatos;
+  pool.sort((a, b) => (b.confianza - a.confianza) || (b.votos - a.votos));
+  const top = pool[0];
+  const segundo = pool[1];
+  // Un solo candidato o el primero ganó claramente → rellenarlo
+  if (top && (!segundo || top.votos > segundo.votos || top.confianza - segundo.confianza >= 15)) {
+    return { lote: top.lote, fuente: 'OCR local (mejor lectura)', confianza: top.confianza, sueltos: [...sueltosGlobal] };
   }
-  return { lote: '', fuente: 'OCR local', confianza: Math.round(mejor.confianza) || null };
+  // Empate/duda → devolver el mejor como principal y el resto como alternativas
+  if (top) {
+    return { lote: top.lote, fuente: 'OCR local (¿quisiste decir…?)', confianza: top.confianza, sueltos: [...sueltosGlobal], alternativas: candidatos.slice(1, 5).map(c => c.lote) };
+  }
+  return { lote: '', fuente: 'OCR local', confianza: null, sueltos: [...sueltosGlobal] };
+}
+
+/** Devuelve el worker a su modo por defecto para futuras lecturas */
+async function restaurarWorker(worker) {
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: '3', preserve_interword_spaces: '0' });
+  } catch (err) { /* no pasa nada */ }
 }
 
 /** ---- Interfaz: botón 📷 junto al campo N° Lote ----
@@ -339,7 +640,7 @@ async function abrirCamaraLote() {
   }
 
   video.srcObject = camaraStreamLote;
-  if (estado) estado.textContent = 'Coloca la papeleta frente a la cámara y pulsa Capturar.';
+  if (estado) estado.textContent = 'Coloca el código dentro del recuadro y pulsa Capturar.';
   if (btnCapturar) btnCapturar.disabled = false;
 }
 
@@ -398,15 +699,61 @@ async function leerYRellenarLote(fileOrBlob) {
     });
 
     const res = await leerLoteDePapeleta(base64);
+    ocrUltimosCandidatos = [];
 
     if (res && res.lote) {
       const extra = res.confianza !== null && res.confianza !== undefined ? ' (' + res.confianza + '%)' : '';
       if (campo) campo.value = res.lote;
-      if (estado) estado.textContent = 'Nº de lote detectado: ' + res.lote + extra + ' — ' + res.fuente;
+      ocrUltimosCandidatos = (res.alternativas || []).map(l => ({ lote: l }));
+      if (estado) {
+        estado.innerHTML = '';
+        estado.appendChild(document.createTextNode('Nº de lote detectado: ' + res.lote + extra + ' — ' + res.fuente));
+        if (ocrUltimosCandidatos.length) {
+          estado.appendChild(document.createElement('br'));
+          estado.appendChild(document.createTextNode('¿No es correcto? Otras lecturas: '));
+          ocrUltimosCandidatos.forEach((c, idx) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'lote-alt-btn';
+            chip.textContent = c.lote;
+            chip.addEventListener('click', () => {
+              const campo2 = document.getElementById('item-lote');
+              if (campo2) campo2.value = c.lote;
+              showToast('Lote corregido a ' + c.lote);
+            });
+            estado.appendChild(chip);
+            if (idx < ocrUltimosCandidatos.length - 1) estado.appendChild(document.createTextNode(' '));
+          });
+        }
+      }
       showToast('Nº de lote detectado: ' + res.lote + extra);
     } else {
-      if (estado) estado.textContent = 'No se pudo leer el lote. Escríbelo a mano.';
-      showToast('No se detectó ningún nº de lote. Escríbelo a mano.', 'error');
+      // Sin lote claro: ofrecer los números sueltos vistos como candidatos
+      const sueltos = (res && res.sueltos ? res.sueltos : []).filter(s => s.length >= 2).slice(0, 5);
+      if (sueltos.length) {
+        ocrUltimosCandidatos = sueltos.map(l => ({ lote: l }));
+        if (estado) {
+          estado.innerHTML = '';
+          estado.appendChild(document.createTextNode('No se identificó el lote con seguridad. ¿Era alguno de estos? '));
+          sueltos.forEach((l, idx) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'lote-alt-btn';
+            chip.textContent = l;
+            chip.addEventListener('click', () => {
+              const campo2 = document.getElementById('item-lote');
+              if (campo2) campo2.value = l;
+              showToast('Lote puesto: ' + l);
+            });
+            estado.appendChild(chip);
+            if (idx < sueltos.length - 1) estado.appendChild(document.createTextNode(' '));
+          });
+        }
+        showToast('Lote dudoso: elige una de las lecturas o escríbelo.', 'error');
+      } else {
+        if (estado) estado.textContent = 'No se pudo leer el lote. Escríbelo a mano.';
+        showToast('No se detectó ningún nº de lote. Escríbelo a mano.', 'error');
+      }
     }
   } catch (err) {
     console.error('OCR lote:', err);
@@ -416,7 +763,7 @@ async function leerYRellenarLote(fileOrBlob) {
     ocrLoteOcupado = false;
     if (btn) btn.disabled = false;
     if (icono) icono.className = 'fa-solid fa-camera-retro';
-    setTimeout(() => { if (estado) estado.classList.add('hidden'); }, 8000);
+    setTimeout(() => { if (estado) estado.classList.add('hidden'); }, 20000);
   }
 }
 
@@ -435,46 +782,73 @@ async function processWithGeminiAI(imageBase64) {
 
   const cleanBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
 
-  const prompt = `Analiza la foto de esta papeleta/albarán de venta de pescado/marisco para Pescadería Rana.
-IMPORTANTE: Busca de forma prioritaria el NÚMERO DE LOTE (ej. "Lote #104", "L-2026-05", "Lote: 849", "Batch: 45").
+  const prompt = `Analiza la foto de esta papeleta/albarán de venta de pescado/marisco de Pescadería Rana.
 
-Extrae la lista de productos pesqueros en un array JSON plano con la siguiente estructura exacta:
+TAREA PRINCIPAL: encuentra el NÚMERO DE LOTE. Puede estar ESCRITO A MANO con bolígrafo o rotulador (letra poco clara, números y letras mezclados, a veces sin guiones, ej: "L-4521", "L4521", "4521", "Lote 104", "2026-05"). Lee los caracteres uno a uno y fíjate en los dígitos reales (una O mayúscula escrita a mano suele ser un 0; una letra l minúscula suele ser un 1).
+
+Luego extrae la lista de productos pesqueros en un array JSON plano con esta estructura exacta:
 [
   {
-    "lote": "Lote 2026-104",
+    "lote": "L-4521",
+    "sueltos": ["4521", "104"],
     "concepto": "Gamba Blanca de Huelva",
     "cantidad": 12.5,
     "precio_kg": 18.50,
     "subtotal": 231.25
   }
 ]
+
+El campo "lote" es el número de lote MÁS PROBABLE tal cual está escrito. El campo "sueltos" es un array con TODOS los demás números o códigos que veas en la foto (por si el principal está mal leído). Si no hay productos, devuelve un array con un único objeto que tenga solo "lote" y "sueltos".
 No agregues explicaciones ni bloques markdown. Responde ÚNICAMENTE con el array JSON.`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: 'image/jpeg', data: cleanBase64 } }
-          ]
-        }
-      ]
-    })
-  });
+  // Modelos a probar: el nuevo flash primero, con reserva al 1.5 clásico
+  const modelos = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  let ultimoError = null;
 
-  if (!response.ok) {
-    throw new Error('Respuesta no válida de Gemini API: ' + response.statusText);
+  for (const modelo of modelos) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: 'image/jpeg', data: cleanBase64 } }
+              ]
+            }
+          ],
+          generationConfig: { temperature: 0, maxOutputTokens: 2048 }
+        })
+      });
+
+      if (!response.ok) {
+        ultimoError = new Error(modelo + ': ' + response.status + ' ' + response.statusText);
+        continue; // probar el siguiente modelo
+      }
+
+      const data = await response.json();
+      const textResponse = data.candidates && data.candidates[0] && data.candidates[0].content
+        ? data.candidates[0].content.parts.map(p => p.text || '').join('')
+        : '';
+
+      const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) continue;
+      const items = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(items)) continue;
+
+      const primero = items[0] || {};
+      const lote = normalizarLote(primero.lote) || '';
+      const sueltos = Array.isArray(primero.sueltos)
+        ? primero.sueltos.map(normalizarLote).filter(Boolean)
+        : [];
+      return { lote, sueltos };
+    } catch (err) {
+      ultimoError = err;
+    }
   }
 
-  const data = await response.json();
-  const textResponse = data.candidates[0].content.parts[0].text;
-
-  const jsonMatch = textResponse.match(/\[.*\]/s);
-  if (jsonMatch) {
-    return JSON.parse(jsonMatch[0]);
-  }
-  return JSON.parse(textResponse);
+  if (ultimoError) throw ultimoError;
+  return { lote: '', sueltos: [] };
 }

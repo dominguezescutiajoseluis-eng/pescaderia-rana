@@ -147,9 +147,110 @@ body {
 /* Main Content Styling */
 .main-content {
   flex: 1;
-  padding: 2rem;
+  padding: 1.5rem 2rem;
   overflow-y: auto;
   max-width: 1400px;
+}
+
+/* ===== MODO SIN SCROLL (escritorio) =====
+   La app ocupa exactamente la ventana: la página NO scrollea. Cada zona
+   larga (vista previa, listas, tablas, tarjetas de ajustes) tiene su propio
+   scroll interno con su título fijo. En pantallas estrechas (móvil) no
+   aplica y se usa el scroll de toda la vida. */
+@media (min-width: 993px) {
+  html,
+  body {
+    overflow: hidden;
+    height: 100vh;
+    scrollbar-width: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-container {
+    height: 100vh;
+  }
+
+  .sidebar {
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .main-content {
+    height: 100vh;
+    padding: 1.25rem 1.75rem;
+  }
+
+  .section-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    margin: 0 0 1rem;
+    padding: 0.25rem 0 0.75rem;
+    flex: 0 0 auto;
+  }
+
+  /* Nada fuera de la tarjeta: sin scrolls fantasma */
+  .main-content {
+    scrollbar-width: thin;
+  }
+
+  .tab-content.active {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .builder-grid,
+  .scanner-grid,
+  .settings-grid,
+  .reports-grid {
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .builder-grid > .card,
+  .scanner-grid > .card,
+  .settings-grid > .card {
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
+
+  /* Vista previa de la factura: cabe entera, la tabla crece con scroll interno */
+  .builder-grid > .preview-card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .builder-grid > .preview-card .invoice-table-wrapper {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* Registro de facturas y desglose del Resumen: tabla con scroll propio */
+  .tab-content .responsive-table-container {
+    overflow: auto;
+    max-height: calc(100vh - 300px);
+    scrollbar-width: thin;
+  }
+
+  .reports-grid {
+    flex: 0 0 auto;
+  }
+
+  /* Ajustes: tarjeta Firebase alta => columnas equilibradas y con scroll */
+  .settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .mobile-header {
@@ -923,6 +1024,26 @@ textarea {
   border: 2px dashed rgba(255, 255, 255, 0.55);
   border-radius: 10px;
   pointer-events: none;
+}
+
+/* Chips de lecturas alternativas del OCR («¿quisiste decir…?») */
+.lote-alt-btn {
+  display: inline-block;
+  margin: 2px 2px 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--primary-color);
+  background: #fff;
+  color: var(--primary-color);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.lote-alt-btn:hover {
+  background: var(--primary-color);
+  color: #fff;
 }
 
 /* Modals & Toasts */

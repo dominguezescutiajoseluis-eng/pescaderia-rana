@@ -74,20 +74,24 @@ function initInvoicesModule() {
 }
 
 /**
- * Genera un número de factura correlativo automático si está libre
+ * Número de factura AUTOMÁTICO estilo 2026/01:
+ * - Año en curso + correlativo de dos dígitos según la última guardada.
+ * - Nuevo año → vuelve a 01. El usuario puede cambiarlo a mano (se validará
+ *   que no esté repetido al guardar).
  */
 async function generateDefaultInvoiceNumber() {
   try {
+    const anio = new Date().getFullYear();
     const invoices = await getAllInvoices();
-    if (invoices.length > 0) {
-      const highestNumber = invoices.reduce((max, inv) => {
-        const num = parseInt(inv.number, 10);
-        return (!isNaN(num) && num > max) ? num : max;
-      }, 0);
-      document.getElementById('inv-number').value = highestNumber + 1;
-    } else {
-      document.getElementById('inv-number').value = '101';
-    }
+    let maximo = 0;
+    invoices.forEach(inv => {
+      const m = String(inv.number || '').match(/^(\d{4})\/(\d{1,4})$/);
+      if (m && Number(m[1]) === anio) {
+        maximo = Math.max(maximo, Number(m[2]));
+      }
+    });
+    const siguiente = String(maximo + 1).padStart(2, '0');
+    document.getElementById('inv-number').value = anio + '/' + siguiente;
     updateInvoicePreview();
   } catch (err) {
     console.error('Error calculando número de factura:', err);
@@ -323,7 +327,7 @@ async function handleSaveInvoice() {
   // Sin duplicados: si el número ya existe en OTRA factura, avisar
   const todas = await getAllInvoices();
   const repetida = todas.find(inv =>
-    String(inv.number) === String(number) &&
+    String(inv.number).toLowerCase() === String(number).toLowerCase() &&
     (!editingInvoiceId || inv.id !== Number(editingInvoiceId))
   );
   if (repetida) {

@@ -1,0 +1,4 @@
+# Ficheros locales con secretos — NUNCA subir al repositorio
+gemini-key.txt
+gemini-key.txt.instalada
+*.key

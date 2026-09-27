@@ -218,6 +218,75 @@ function binarizarAdaptativa(g, w, h) {
   return out;
 }
 
+/** Detección de la zona de tinta: promedia la oscuridad por filas y columnas
+ *  (sobre una miniatura de 300px, coste insignificante) y devuelve el rectángulo
+ *  donde se concentra el texto. Devuelve {x,y,w,h} en px de la imagen original
+ *  con un 6% de margen, o null si la foto parece uniforme (sin texto claro). */
+function detectarZonaTinta(img) {
+  const M = 300; // lado de la miniatura de análisis
+  const escala = Math.min(1, M / Math.max(img.width, img.height));
+  const w = Math.max(16, Math.round(img.width * escala));
+  const h = Math.max(16, Math.round(img.height * escala));
+  const mini = document.createElement('canvas');
+  mini.width = w; mini.height = h;
+  const ctx = mini.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  const g = grisesDeCanvas(ctx, w, h);
+
+  // oscuro = 255 - gris
+  const fila = new Float64Array(h);
+  const col = new Float64Array(w);
+  let maxF = 0, maxC = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const d = 255 - g[y * w + x];
+      fila[y] += d; col[x] += d;
+    }
+  }
+  for (let y = 0; y < h; y++) { fila[y] /= w; if (fila[y] > maxF) maxF = fila[y]; }
+  for (let x = 0; x < w; x++) { col[x] /= h; if (col[x] > maxC) maxC = col[x]; }
+  if (!maxF || !maxC) return null;
+
+  const umbralF = maxF * 0.28;
+  const umbralC = maxC * 0.28;
+  let y0 = -1, y1 = -1, x0 = -1, x1 = -1;
+  for (let y = 0; y < h; y++) if (fila[y] >= umbralF) { if (y0 < 0) y0 = y; y1 = y; }
+  for (let x = 0; x < w; x++) if (col[x] >= umbralC) { if (x0 < 0) x0 = x; x1 = x; }
+  if (y0 < 0 || x0 < 0) return null;
+
+  // margen del 6% del recorte a cada lado (mínimo 8px de miniatura)
+  const mx = Math.max(4, Math.round((x1 - x0) * 0.06));
+  const my = Math.max(4, Math.round((y1 - y0) * 0.06));
+  x0 = Math.max(0, x0 - mx); x1 = Math.min(w - 1, x1 + mx);
+  y0 = Math.max(0, y0 - my); y1 = Math.min(h - 1, y1 + my);
+
+  const inv = 1 / escala; // de px de miniatura a px de la foto real
+  return {
+    x: Math.round(x0 * inv),
+    y: Math.round(y0 * inv),
+    w: Math.max(16, Math.round((x1 - x0 + 1) * inv)),
+    h: Math.max(16, Math.round((y1 - y0 + 1) * inv)),
+  };
+}
+
+/** Recorta un rectángulo {x,y,w,h} de la imagen reescalado a un ancho (con
+ *  ampliación máx. 2x y reducción en dos pasos, como recorteGuia) */
+function recortarRectangulo(img, r, anchoDeseado) {
+  const sw = Math.min(r.w, img.width - r.x);
+  const sh = Math.min(r.h, img.height - r.y);
+  const ancho = Math.round(Math.min(anchoDeseado, sw * 2));
+  const alto = Math.max(16, Math.round(ancho * sh / sw));
+  const c = document.createElement('canvas');
+  c.width = ancho; c.height = alto;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, r.x, r.y, sw, sh, 0, 0, ancho, alto);
+  return { c, ctx };
+}
+
 /** Recorta la ZONA DE LA GUÍA de la cámara (con margen) reescalada a un ancho
  *  determinado. Reducir va en dos pasos para no perder trazos finos de
  *  bolígrafo (un reescalado directo de 4000px a 1100px los borra); si el
@@ -333,6 +402,31 @@ async function variantesDeImagen(imageBase64) {
     const g = grisesDeCanvas(ctx, c.width, c.height);
     pintarGrises(c, dilatarTinta(binarizarAdaptativa(g, c.width, c.height), c.width, c.height));
     variantes.push({ nombre: 'guia-adapt', data: c.toDataURL('image/jpeg', 0.95), recorte: true });
+  } catch (err) { /* seguimos */ }
+
+  // 6) ZONA DETECTADA: busco DÓNDE está la tinta en la foto (proyección de
+  //    oscuridad por filas y columnas). Así funciona aunque el código NO esté
+  //    en la zona de la guía: fotos del móvil hechas a mano al alba, papeleta
+  //    ladeada, capturas recortadas… Primero en GRIS (la más fiable), luego
+  //    anti-rayado y adaptativa como reservas.
+  try {
+    const zona = detectarZonaTinta(img);
+    if (zona) {
+      const g1 = recortarRectangulo(img, zona, 1100);
+      let gz = grisesDeCanvas(g1.ctx, g1.c.width, g1.c.height);
+      gz = engordarTinta(gz, g1.c.width, g1.c.height);
+      pintarGrises(g1.c, gz);
+      variantes.unshift({ nombre: 'zona', data: g1.c.toDataURL('image/jpeg', 0.95), recorte: true });
+
+      const g2 = recortarRectangulo(img, zona, 1000);
+      let g = grisesDeCanvas(g2.ctx, g2.c.width, g2.c.height);
+      g = engordarTinta(g, g2.c.width, g2.c.height);
+      g = binarizarOtsu(g);
+      g = quitarRayasHorizontales(g, g2.c.width, g2.c.height);
+      g = dilatarTinta(g, g2.c.width, g2.c.height);
+      pintarGrises(g2.c, g);
+      variantes.push({ nombre: 'zona-cifras', data: g2.c.toDataURL('image/jpeg', 0.95), recorte: true });
+    }
   } catch (err) { /* seguimos */ }
 
   // 6) Reservas: binaria entera y negativo (papel oscuro)
@@ -675,6 +769,21 @@ function initOcrLote() {
   if (campoLote) {
     campoLote.addEventListener('change', aprendeOcrDeCampo);
     campoLote.addEventListener('blur', aprendeOcrDeCampo);
+  }
+
+  // CLAVE DE IA DE FÁBRICA: si el envoltorio de escritorio trae una pendiente
+  // (gemini-key.txt), se instala en Configuración una sola vez, en silencio.
+  if (window.ES_ESCRITORIO && window.claveIAFabrica) {
+    window.claveIAFabrica().then(async (clave) => {
+      if (!clave) return;
+      try {
+        const actual = await getSetting('gemini_api_key', '');
+        if (!actual) {
+          await saveSetting('gemini_api_key', clave);
+          console.log('Clave de IA instalada automáticamente (gemini-key.txt).');
+        }
+      } catch (err) { console.warn('No se pudo instalar la clave de IA:', err); }
+    });
   }
 
   // Cerrar con la tecla Escape

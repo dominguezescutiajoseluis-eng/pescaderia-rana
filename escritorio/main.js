@@ -287,6 +287,16 @@ app.commandLine.appendSwitch('in-process-gpu');        // ni proceso de GPU apar
 app.commandLine.appendSwitch('use-angle', 'swiftshader'); // si algo pide GL: software
 app.disableHardwareAcceleration();
 
+// Equipos modestos (1 nucleo, disco mecanico): menos procesos y trabajo de
+// fondo de Chromium, para que la app vaya fluida y no robe CPU al resto.
+app.commandLine.appendSwitch('renderer-process-limit', '1'); // un solo renderizador para todo
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-renderer-backgrounding'); // no ralentizar pestañas al perder foco
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-breakpad');            // sin telemetria de fallos
+app.commandLine.appendSwitch('disable-component-update');    // sin descargas de componentes Chromium
+
 // Si el proceso de render se cae (por lo que sea), recargar la ventana sola
 let reiniciosRender = 0;
 

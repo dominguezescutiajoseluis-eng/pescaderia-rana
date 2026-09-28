@@ -1,0 +1,5 @@
+node_modules/
+.build/
+dist/
+gemini-key.txt
+gemini-key.txt.instalada

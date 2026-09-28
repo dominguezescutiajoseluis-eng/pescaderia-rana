@@ -1,0 +1,20 @@
+[Unit]
+Description=Pescaderia Rana Facturador (modo kiosko)
+# Nota: lightdm (autologin) NO activa graphical-session.target, por eso el
+# servicio se engancha a default.target del usuario, que siempre se alcanza.
+After=default.target
+
+# Sin limite de reintentos: si la sesion grafica (X en :0) aun no esta lista,
+# Electron falla al abrir el display y systemd reintenta cada 3 s hasta lograrlo.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pepe/.Xauthority
+ExecStart=/home/pepe/facturador-nuevo/opt/pescaderia-rana-facturador/pescaderia-rana-facturador --kiosko
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

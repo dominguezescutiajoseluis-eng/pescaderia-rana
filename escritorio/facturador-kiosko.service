@@ -13,8 +13,12 @@ Type=simple
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pepe/.Xauthority
 ExecStart=/home/pepe/facturador-nuevo/opt/pescaderia-rana-facturador/pescaderia-rana-facturador --kiosko
-Restart=always
+# on-failure: si alguien cierra la app a proposito (Ctrl+Alt+Q, Salir o la X
+# de la ventana), se queda cerrada hasta el proximo encendido del PC; solo se
+# reabre sola si se cuelga o falla al arrancar.
+Restart=on-failure
 RestartSec=3
+SuccessExitStatus=0 143
 
 [Install]
 WantedBy=default.target

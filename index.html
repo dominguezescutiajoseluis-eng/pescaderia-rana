@@ -34,9 +34,8 @@
     <!-- Sidebar / Navigation -->
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-logo">
-          <i id="brand-logo-icon" class="fa-solid fa-fish-fins"></i>
-          <img id="brand-logo-img" class="brand-logo-img hidden" alt="Logotipo">
+        <div class="brand-logo hidden" id="brand-logo-box">
+          <img id="brand-logo-img" class="brand-logo-img" alt="Logotipo">
         </div>
         <div class="brand-info">
           <h2 id="brand-name">PESCADERÍA RANA</h2>
@@ -62,11 +61,16 @@
           <i class="fa-solid fa-chart-line"></i>
           <span>Resumen de Ventas</span>
         </button>
-        <button class="nav-btn" data-tab="settings">
+        <button class="nav-btn" data-tab="settings" data-admin>
           <i class="fa-solid fa-gear"></i>
           <span>Configuración</span>
         </button>
       </nav>
+
+      <button id="admin-toggle" class="admin-toggle" type="button" title="Entrar en administración con el PIN">
+        <i class="fa-solid fa-lock"></i>
+        <span>Administración</span>
+      </button>
 
       <div class="mobile-device-info">
         <i class="fa-solid fa-cloud"></i>
@@ -79,7 +83,6 @@
       <!-- Top Mobile Header -->
       <header class="mobile-header">
         <div class="mobile-brand">
-          <i class="fa-solid fa-fish-fins"></i>
           <h1 id="mobile-brand-name">PESCADERÍA RANA</h1>
         </div>
         <button id="mobile-menu-toggle" class="icon-btn">
@@ -114,12 +117,12 @@
             
             <div class="form-row">
               <div class="form-group">
-                <label for="inv-number">Nº Factura <small style="color: var(--text-secondary);">(automático: año/01, editable)</small></label>
-                <input type="text" id="inv-number" class="form-input" placeholder="2026/01">
+                <label for="inv-number">Nº Factura <small style="color: var(--text-secondary);">(automático)</small></label>
+                <input type="text" id="inv-number" class="form-input" placeholder="2026/01" readonly title="El número se genera solo (año/número)">
               </div>
               <div class="form-group">
                 <label for="inv-date">Fecha</label>
-                <input type="date" id="inv-date" class="form-input">
+                <input type="date" id="inv-date" class="form-input" readonly title="La factura se emite con la fecha de hoy">
               </div>
             </div>
 
@@ -135,35 +138,35 @@
               </div>
             </div>
 
-            <div class="form-row">
-              <div class="form-group">
-                <label for="inv-client-name">Nombre Cliente</label>
-                <input type="text" id="inv-client-name" class="form-input" placeholder="Nombre o Razón Social">
-              </div>
-              <div class="form-group">
-                <label for="inv-client-cif">CIF / NIF</label>
-                <input type="text" id="inv-client-cif" class="form-input" placeholder="CIF del cliente">
-              </div>
+            <div class="form-group">
+              <label for="inv-client-name">Nombre Cliente</label>
+              <input type="text" id="inv-client-name" class="form-input" placeholder="Nombre o Razón Social">
             </div>
 
-            <div class="form-row">
+            <details class="datos-extra">
+              <summary>Más datos del cliente (CIF, dirección, provincia y teléfono)</summary>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="inv-client-cif">CIF / NIF</label>
+                  <input type="text" id="inv-client-cif" class="form-input" placeholder="CIF del cliente">
+                </div>
+                <div class="form-group">
+                  <label for="inv-client-province">Provincia</label>
+                  <input type="text" id="inv-client-province" class="form-input" value="Málaga">
+                </div>
+              </div>
+
               <div class="form-group">
                 <label for="inv-client-address">Dirección</label>
                 <input type="text" id="inv-client-address" class="form-input" placeholder="Dirección">
               </div>
-              <div class="form-group">
-                <label for="inv-client-province">Provincia</label>
-                <input type="text" id="inv-client-province" class="form-input" value="Málaga">
-              </div>
-            </div>
 
-            <div class="form-row">
-              <div class="form-group flex-2">
+              <div class="form-group">
                 <label for="inv-client-phone"><i class="fa-brands fa-whatsapp"></i> Teléfono (para WhatsApp)</label>
                 <input type="tel" id="inv-client-phone" class="form-input" placeholder="Ej: 600 123 456">
               </div>
-              <div class="form-group"></div>
-            </div>
+            </details>
 
             <hr class="divider">
 
@@ -171,7 +174,7 @@
             <div class="active-items-panel">
               <div class="panel-header">
                 <h4><i class="fa-solid fa-cart-shopping"></i> Productos Añadidos a la Factura (<span id="active-items-count">0</span>)</h4>
-                <button id="btn-clear-active-items" class="btn btn-secondary btn-sm text-danger" title="Vaciar productos">
+                <button id="btn-clear-active-items" class="btn btn-secondary btn-sm text-danger" title="Vaciar productos" data-admin>
                   <i class="fa-solid fa-trash-can"></i> Vaciar Lista
                 </button>
               </div>
@@ -337,10 +340,10 @@
         <div class="section-header">
           <div>
             <h1>Registro e Historial de Facturas</h1>
-            <p>Facturas emitidas y guardadas. Puedes editarlas, imprimirlas o borrarlas.</p>
+            <p>Facturas emitidas y guardadas: consulta, imprime, reenvía o repite cualquiera.</p>
           </div>
           <div class="header-actions">
-            <button id="btn-export-backup" class="btn btn-secondary">
+            <button id="btn-export-backup" class="btn btn-secondary" data-admin>
               <i class="fa-solid fa-download"></i> Guardar Copia de Seguridad
             </button>
           </div>
@@ -561,6 +564,31 @@
           </div>
 
           <div class="card">
+            <h3><i class="fa-solid fa-lock"></i> Administración (PIN)</h3>
+            <p class="help-text">Con PIN, la app arranca en modo mostrador: sin Configuración y sin botones de borrar o editar facturas.</p>
+            <p class="help-text" id="admin-pin-estado">Comprobando…</p>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-admin-pin">PIN (4 a 8 números)</label>
+                <input type="password" id="cfg-admin-pin" class="form-input" inputmode="numeric" maxlength="8" placeholder="••••">
+              </div>
+              <div class="form-group align-end">
+                <button id="btn-guardar-pin" class="btn btn-primary full-width">Guardar PIN</button>
+              </div>
+            </div>
+            <button id="btn-quitar-pin" class="btn btn-secondary margin-top-sm full-width">Quitar PIN</button>
+          </div>
+
+          <div class="card">
+            <h3><i class="fa-solid fa-clock-rotate-left"></i> Copia de Seguridad Automática</h3>
+            <p class="help-text">La app guarda sola una copia al día de clientes y facturas. Si algo se borra, se puede volver a esa copia.</p>
+            <p class="help-text" id="backup-estado">Todavía no hay copia guardada.</p>
+            <button id="btn-restaurar-copia" class="btn btn-secondary margin-top-sm">Restaurar la última copia</button>
+            <button id="btn-restaurar-archivo" class="btn btn-secondary margin-top-sm full-width">Restaurar desde archivo…</button>
+            <input type="file" id="input-restaurar-archivo" class="hidden" accept="application/json,.json">
+          </div>
+
+          <div class="card">
             <h3><i class="fa-solid fa-fire"></i> Sincronización en la Nube (Firebase)</h3>
             <p class="help-text">Configura tu proyecto de Firebase para sincronizar automáticamente datos entre todos tus móviles y PC, además de permitir trabajo offline.</p>
             
@@ -676,6 +704,25 @@
     </div>
   </div>
 
+  <!-- MODAL DE ADMINISTRACIÓN (PIN) -->
+  <div id="admin-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-card--sm">
+      <div class="modal-header">
+        <h3 id="admin-modal-title">Entrar en administración</h3>
+        <button id="btn-cerrar-admin" class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="help-text" id="admin-modal-help">Introduce el PIN para entrar en administración.</p>
+        <input type="password" id="admin-pin" class="form-input" inputmode="numeric" maxlength="8" placeholder="PIN">
+        <p class="help-text admin-pin-error hidden" id="admin-pin-error">PIN incorrecto.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancelar-admin" class="btn btn-secondary">Cancelar</button>
+        <button id="btn-entrar-admin" class="btn btn-primary">Entrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST NOTIFICATION -->
   <div id="toast" class="toast hidden">
     <i class="fa-solid fa-circle-check" id="toast-icon"></i>
@@ -693,6 +740,7 @@
   <script src="js/whatsapp.js"></script>
   <script src="js/exportar.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/admin.js"></script>
 
   <!-- Service Worker PWA: en la web da soporte sin conexión; en la app de
        escritorio (window.ES_ESCRITORIO, lo marca Electron) no se registra

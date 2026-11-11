@@ -1668,3 +1668,148 @@ h1, h2, h3 {
 
 /* Fin del tema visual. La impresión y el documento siguen con sus reglas
    originales, que quedan por encima de este bloque. */
+
+/* ==========================================================================
+   MODO MOSTRADOR: arranca sin Configuración ni acciones destructivas
+   ========================================================================== */
+
+body:not(.modo-admin) [data-admin] {
+  display: none !important;
+}
+
+.admin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  margin-top: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: #f8fbff;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.admin-toggle:hover {
+  background: #f0f9ff;
+  border-color: #c3e6fd;
+  color: #0369a1;
+}
+
+.admin-toggle.activo {
+  background: #f0f9ff;
+  border-color: #8ed6fc;
+  color: #065986;
+}
+
+.admin-toggle i { font-size: 0.9rem; }
+
+/* Número y fecha de factura: se leen, no se editan en modo mostrador */
+.form-input[readonly] {
+  background: #f5faff;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+/* Datos del cliente plegados: en el mostrador solo se ve el nombre */
+.datos-extra {
+  margin: 0.25rem 0 0.9rem;
+  padding: 0.1rem 0.9rem 0.2rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: #fbfdff;
+}
+
+.datos-extra > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0369a1;
+  cursor: pointer;
+  list-style: none;
+}
+
+.datos-extra > summary::-webkit-details-marker { display: none; }
+
+.datos-extra > summary::before {
+  content: '▾';
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.datos-extra[open] > summary::before { transform: rotate(180deg); }
+
+.datos-extra[open] { padding-bottom: 0.6rem; }
+
+/* Modal del PIN */
+.modal-card--sm { max-width: 380px; }
+
+.admin-pin-error {
+  color: #dc2626;
+  font-size: 0.82rem;
+  margin-top: 0.45rem;
+}
+
+/* ==========================================================================
+   PANEL LATERAL ESTABLE: ancho fijo, menú con scroll propio y sin riel que se
+   despliegue al pasar el ratón (en el mostrador eso mareaba).
+   ========================================================================== */
+
+@media (min-width: 993px) {
+  .sidebar,
+  .sidebar:hover,
+  .sidebar:focus-within {
+    width: 248px;
+    flex: 0 0 248px;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    overflow: hidden;
+    box-shadow: none;
+    transition: none;
+  }
+
+  .sidebar {
+    padding: 1.15rem 0.85rem;
+  }
+
+  .sidebar .brand-info,
+  .sidebar .nav-btn span,
+  .sidebar .mobile-device-info span {
+    opacity: 1;
+    visibility: visible;
+    white-space: normal;
+  }
+
+  .brand {
+    gap: 0.7rem;
+    padding-bottom: 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .nav-menu {
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: 2px;
+  }
+
+  .nav-btn {
+    padding: 0.68rem 0.75rem;
+  }
+}
+
+/* Logotipo propio: si el negocio no ha cargado uno, el hueco no existe */
+.brand-logo {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  min-width: 0;
+  min-height: 0;
+}

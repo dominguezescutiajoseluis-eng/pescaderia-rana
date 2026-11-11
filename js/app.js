@@ -146,16 +146,14 @@ function aplicarDatosEmisor(datos = {}) {
   pone('mobile-brand-name', datos.companyName);
 
   const logoMarca = document.getElementById('brand-logo-img');
-  const iconoMarca = document.getElementById('brand-logo-icon');
-  if (logoMarca && iconoMarca) {
+  const cajaMarca = document.getElementById('brand-logo-box');
+  if (logoMarca && cajaMarca) {
     if (datos.logo) {
       logoMarca.src = datos.logo;
-      logoMarca.classList.remove('hidden');
-      iconoMarca.classList.add('hidden');
+      cajaMarca.classList.remove('hidden');
     } else {
       logoMarca.removeAttribute('src');
-      logoMarca.classList.add('hidden');
-      iconoMarca.classList.remove('hidden');
+      cajaMarca.classList.add('hidden');
     }
   }
 

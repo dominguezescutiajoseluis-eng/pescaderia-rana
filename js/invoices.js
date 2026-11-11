@@ -113,7 +113,17 @@ function handleAddItemFromForm() {
   const precio_kg = parseFloat(priceInput.value) || 0;
 
   if (!concepto) {
-    alert('Por favor introduce la especie o concepto del pescado.');
+    showToast('Escribe la especie o concepto del pescado', 'error');
+    return;
+  }
+
+  if (!(cantidad > 0)) {
+    showToast('La cantidad tiene que ser mayor que 0', 'error');
+    return;
+  }
+
+  if (!(precio_kg > 0)) {
+    showToast('El precio por kilo tiene que ser mayor que 0', 'error');
     return;
   }
 
@@ -301,12 +311,19 @@ async function handleSaveInvoice() {
   const clientProvince = document.getElementById('inv-client-province').value.trim();
 
   if (!number) {
-    alert('Por favor introduce el número de factura.');
+    showToast('No se ha podido calcular el número de factura', 'error');
+    return;
+  }
+
+  if (!clientName) {
+    showToast('Escribe o elige el cliente de la agenda', 'error');
+    const nombre = document.getElementById('inv-client-name');
+    if (nombre) nombre.focus();
     return;
   }
 
   if (activeInvoiceItems.length === 0) {
-    alert('No puedes guardar una factura vacía. Añade al menos un producto.');
+    showToast('Añade al menos un producto a la factura', 'error');
     return;
   }
 
@@ -331,7 +348,7 @@ async function handleSaveInvoice() {
     (!editingInvoiceId || inv.id !== Number(editingInvoiceId))
   );
   if (repetida) {
-    alert('Ya existe una factura con el número ' + number + ' (cliente: ' + (repetida.clientName || '-') + ').\nUsa otro número o edita la existente desde el Registro de Facturas.');
+    showToast('Ya existe la factura ' + number + ' (' + (repetida.clientName || '-') + '). Usa otro número.', 'error');
     return;
   }
 
@@ -347,7 +364,7 @@ async function handleSaveInvoice() {
     await loadInvoicesHistory();
   } catch (err) {
     console.error('Error al guardar factura:', err);
-    alert('Error al guardar la factura: ' + err.message);
+    showToast('No se pudo guardar: ' + err.message, 'error');
   }
 }
 
@@ -399,6 +416,7 @@ function renderInvoicesHistory(list) {
     return;
   }
 
+  const admin = typeof esAdmin === 'function' && esAdmin();
   let html = '';
   list.forEach(inv => {
     html += `
@@ -409,18 +427,22 @@ function renderInvoicesHistory(list) {
         <td>${escapeHtml(inv.clientCif || '-')}</td>
         <td><strong>${formatNumber(inv.totalFactura)} €</strong></td>
         <td>
-          <button class="btn btn-secondary btn-sm" onclick="editInvoiceInBuilder(${inv.id})" title="Editar Factura">
-            <i class="fa-solid fa-pen-to-square"></i> Editar
-          </button>
           <button class="btn btn-success btn-sm" onclick="printInvoiceFromHistory(${inv.id})" title="Imprimir / PDF">
             <i class="fa-solid fa-print"></i> PDF
           </button>
           <button class="btn btn-sm btn-whatsapp" onclick="whatsappDesdeRegistro(${inv.id})" title="Enviar por WhatsApp Web">
             <i class="fa-brands fa-whatsapp"></i>
           </button>
-          <button class="icon-btn" onclick="confirmDeleteInvoice(${inv.id})" title="Eliminar Factura">
-            <i class="fa-solid fa-trash" style="color: #ef4444;"></i>
+          ${admin ? `
+          <button class="btn btn-secondary btn-sm" onclick="editInvoiceInBuilder(${inv.id})" title="Editar esta factura (solo administración)">
+            <i class="fa-solid fa-pen-to-square"></i> Editar
           </button>
+          <button class="icon-btn" onclick="confirmDeleteInvoice(${inv.id})" title="Eliminar factura (solo administración)">
+            <i class="fa-solid fa-trash" style="color: #ef4444;"></i>
+          </button>` : `
+          <button class="btn btn-secondary btn-sm" onclick="duplicarFactura(${inv.id})" title="Crear una factura nueva copiando esta">
+            <i class="fa-solid fa-copy"></i> Repetir
+          </button>`}
         </td>
       </tr>
     `;
@@ -464,6 +486,35 @@ async function editInvoiceInBuilder(id) {
     document.querySelector('.nav-btn[data-tab="invoice-builder"]').click();
   } catch (err) {
     alert('Error al cargar la factura: ' + err.message);
+  }
+}
+
+/**
+ * Copia una factura guardada a una NUEVA factura (sin tocar la original).
+ * Es lo que se ofrece en modo mostrador para repetir un pedido habitual.
+ */
+async function duplicarFactura(id) {
+  try {
+    const inv = await getInvoiceById(id);
+    if (!inv) return;
+
+    editingInvoiceId = null;
+    document.getElementById('inv-client-name').value = inv.clientName || '';
+    document.getElementById('inv-client-cif').value = inv.clientCif || '';
+    document.getElementById('inv-client-address').value = inv.clientAddress || '';
+    document.getElementById('inv-client-province').value = inv.clientProvince || 'Málaga';
+    const telInput = document.getElementById('inv-client-phone');
+    if (telInput) telInput.value = inv.clientPhone || '';
+
+    document.getElementById('inv-date').value = new Date().toISOString().split('T')[0];
+    activeInvoiceItems = (inv.items || []).map(it => ({ ...it }));
+    await generateDefaultInvoiceNumber();
+    updateInvoicePreview();
+
+    document.querySelector('.nav-btn[data-tab="invoice-builder"]').click();
+    showToast('Copia de la factura ' + inv.number + ': revisa kilos y precios');
+  } catch (err) {
+    showToast('No se pudo copiar la factura: ' + err.message, 'error');
   }
 }
 

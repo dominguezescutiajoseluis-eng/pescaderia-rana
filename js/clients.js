@@ -86,6 +86,7 @@ function renderClientsTable(list) {
     return;
   }
 
+  const admin = typeof esAdmin === 'function' && esAdmin();
   let html = '';
   list.forEach(c => {
     html += `
@@ -102,9 +103,9 @@ function renderClientsTable(list) {
           <button class="icon-btn" onclick="editClient(${c.id})" title="Editar">
             <i class="fa-solid fa-pen"></i>
           </button>
-          <button class="icon-btn" onclick="confirmDeleteClient(${c.id})" title="Eliminar">
+          ${admin ? `<button class="icon-btn" onclick="confirmDeleteClient(${c.id})" title="Eliminar cliente (solo administración)">
             <i class="fa-solid fa-trash" style="color: #ef4444;"></i>
-          </button>
+          </button>` : ''}
         </td>
       </tr>
     `;

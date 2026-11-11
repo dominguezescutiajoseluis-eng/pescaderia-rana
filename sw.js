@@ -2,7 +2,7 @@
    PESCADERÍA RANA - SERVICE WORKER PWA (v4: todo local + Firebase opcional)
    ========================================================================== */
 
-const CACHE_NAME = 'pescaderia-rana-v4';
+const CACHE_NAME = 'pescaderia-rana-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -18,6 +18,7 @@ const ASSETS = [
   './js/whatsapp.js',
   './js/exportar.js',
   './js/app.js',
+  './js/admin.js',
   './manifest.json',
   './assets/icon-192.png',
   './assets/icon-512.png',

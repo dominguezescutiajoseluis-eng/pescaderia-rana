@@ -179,3 +179,26 @@ async function saveSetting(key, value) {
 
 // La agenda nace VACÍA: no se siembran clientes de ejemplo.
 // Todo lo que aparezca lo habrá dado de alta el usuario.
+
+/**
+ * Sustituye TODOS los datos por los de una copia de seguridad.
+ * Se usa al restaurar (solo desde administración). Los ids se conservan.
+ */
+async function reemplazarDatos(clientes = [], facturas = []) {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['clients', 'invoices'], 'readwrite');
+    const storeClientes = tx.objectStore('clients');
+    const storeFacturas = tx.objectStore('invoices');
+
+    storeClientes.clear();
+    storeFacturas.clear();
+
+    clientes.forEach(c => storeClientes.put(c));
+    facturas.forEach(f => storeFacturas.put(f));
+
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = (e) => reject(e.target.error);
+    tx.onabort = (e) => reject(e.target.error || new Error('Restauración cancelada'));
+  });
+}

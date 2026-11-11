@@ -35,10 +35,11 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-logo">
-          <i class="fa-solid fa-fish-fins"></i>
+          <i id="brand-logo-icon" class="fa-solid fa-fish-fins"></i>
+          <img id="brand-logo-img" class="brand-logo-img hidden" alt="Logotipo">
         </div>
         <div class="brand-info">
-          <h2>PESCADERÍA RANA</h2>
+          <h2 id="brand-name">PESCADERÍA RANA</h2>
           <span>Sistema de Trazabilidad</span>
         </div>
       </div>
@@ -79,7 +80,7 @@
       <header class="mobile-header">
         <div class="mobile-brand">
           <i class="fa-solid fa-fish-fins"></i>
-          <h1>PESCADERÍA RANA</h1>
+          <h1 id="mobile-brand-name">PESCADERÍA RANA</h1>
         </div>
         <button id="mobile-menu-toggle" class="icon-btn">
           <i class="fa-solid fa-bars"></i>
@@ -233,13 +234,15 @@
                 <!-- Header Section -->
                 <div class="invoice-header">
                   <div class="company-block">
-                    <h2 class="company-title">PESCADERÍA RANA</h2>
-                    <p class="company-owner">José Luis Domínguez Díaz</p>
-                    <p class="company-nif">N. I. F.: 77 472 441 - T</p>
-                    <p class="company-address">Avda. Andalucia, local Nº 2 -</p>
-                    <p class="company-pc">29750 Algarrobo Costa</p>
-                    <p class="company-city">(Málaga)</p>
-                    <p class="company-phone">Telf.: 692 216 951</p>
+                    <img id="pv-company-logo" class="invoice-logo hidden" alt="">
+                    <h2 class="company-title" id="pv-company-title">PESCADERÍA RANA</h2>
+                    <p class="company-owner" id="pv-company-owner">José Luis Domínguez Díaz</p>
+                    <p class="company-nif">N. I. F.: <span id="pv-company-nif">77 472 441 - T</span></p>
+                    <p class="company-address" id="pv-company-address">Avda. Andalucia, local Nº 2</p>
+                    <p class="company-pc"><span id="pv-company-pc">29750</span> <span id="pv-company-city">Algarrobo Costa</span></p>
+                    <p class="company-city" id="pv-company-province-line">(Málaga)</p>
+                    <p class="company-phone">Telf.: <span id="pv-company-phone">692 216 951</span></p>
+                    <p class="company-email hidden" id="pv-company-email"></p>
                   </div>
 
                   <div class="meta-block">
@@ -470,7 +473,7 @@
         <div class="section-header">
           <div>
             <h1>Configuración</h1>
-            <p>Datos del emisor Pescadería Rana, Sincronización Nube Firebase y clave IA</p>
+            <p>Datos del negocio (sirven para cualquier pescadería), sincronización con la nube y clave IA</p>
           </div>
         </div>
 
@@ -487,30 +490,74 @@
           </div>
 
           <div class="card">
-            <h3><i class="fa-solid fa-store"></i> Datos Emisor (Pescadería Rana)</h3>
+            <h3><i class="fa-solid fa-store"></i> Datos del Negocio</h3>
+            <p class="help-text">Estos datos aparecen en la cabecera de cada factura, en el menú lateral y en el título de la app. Al cambiarlos, la misma aplicación sirve para otra pescadería.</p>
             <div class="form-group">
-              <label>Nombre Comercial</label>
+              <label for="cfg-company-name">Nombre Comercial</label>
               <input type="text" id="cfg-company-name" class="form-input" value="PESCADERÍA RANA">
             </div>
             <div class="form-group">
-              <label>Titular</label>
+              <label for="cfg-owner">Titular</label>
               <input type="text" id="cfg-owner" class="form-input" value="José Luis Domínguez Díaz">
             </div>
-            <div class="form-group">
-              <label>N. I. F.</label>
-              <input type="text" id="cfg-nif" class="form-input" value="77 472 441 - T">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-nif">N. I. F.</label>
+                <input type="text" id="cfg-nif" class="form-input" value="77 472 441 - T">
+              </div>
+              <div class="form-group">
+                <label for="cfg-phone">Teléfono</label>
+                <input type="text" id="cfg-phone" class="form-input" value="692 216 951">
+              </div>
             </div>
             <div class="form-group">
-              <label>Dirección</label>
-              <input type="text" id="cfg-address" class="form-input" value="Avda. Andalucia, local Nº 2 - 29750 Algarrobo Costa">
+              <label for="cfg-address">Dirección</label>
+              <input type="text" id="cfg-address" class="form-input" value="Avda. Andalucia, local Nº 2">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-postal">Código Postal</label>
+                <input type="text" id="cfg-postal" class="form-input" value="29750">
+              </div>
+              <div class="form-group">
+                <label for="cfg-city">Ciudad</label>
+                <input type="text" id="cfg-city" class="form-input" value="Algarrobo Costa">
+              </div>
             </div>
             <div class="form-group">
-              <label>Teléfono</label>
-              <input type="text" id="cfg-phone" class="form-input" value="692 216 951">
+              <label for="cfg-province">Provincia</label>
+              <input type="text" id="cfg-province" class="form-input" value="Málaga">
             </div>
+            <div class="form-group">
+              <label for="cfg-email">Email</label>
+              <input type="email" id="cfg-email" class="form-input" placeholder="pedidos@pescaderia.es">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-accent">Color de marca</label>
+                <input type="color" id="cfg-accent" class="form-input" value="#0d5c75">
+              </div>
+              <div class="form-group">
+                <label for="cfg-logo">Logotipo</label>
+                <input type="file" id="cfg-logo" class="form-input" accept="image/*">
+              </div>
+            </div>
+            <p class="help-text" id="cfg-logo-estado">Sin logotipo: se usa el icono de pez de la app.</p>
             <button id="btn-save-company-cfg" class="btn btn-primary margin-top-md">
-              <i class="fa-solid fa-floppy-disk"></i> Guardar Datos Emisor
+              <i class="fa-solid fa-floppy-disk"></i> Guardar Datos del Negocio
             </button>
+          </div>
+
+          <div class="card">
+            <h3><i class="fa-solid fa-copy"></i> Perfil del Negocio (para otro PC)</h3>
+            <p class="help-text">Guarda nombre, NIF, dirección, color y logotipo en un archivo. Al importarlo en otro ordenador, la app queda ya configurada para ese negocio.</p>
+            <button id="btn-export-profile" class="btn btn-primary margin-top-sm">
+              <i class="fa-solid fa-download"></i> Exportar perfil
+            </button>
+            <button id="btn-import-profile" class="btn btn-secondary margin-top-sm full-width">
+              <i class="fa-solid fa-upload"></i> Importar perfil…
+            </button>
+            <input type="file" id="cfg-import-profile-file" class="hidden" accept="application/json,.json">
           </div>
 
           <div class="card">

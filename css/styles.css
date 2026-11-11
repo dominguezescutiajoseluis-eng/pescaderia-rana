@@ -1644,55 +1644,9 @@ h1, h2, h3 {
   border-radius: 8px;
 }
 
-/* --- Documento de la factura --- */
-.preview-toolbar {
-  background: #f0f9ff;
-  color: #065986;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-}
-
-.invoice-document {
-  background: #ffffff;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-}
-
-.company-title {
-  font-family: var(--font-heading);
-  color: #063a52;
-  letter-spacing: -0.02em;
-}
-
-.company-owner,
-.company-nif,
-.company-address,
-.company-pc,
-.company-city,
-.company-phone,
-.company-email {
-  color: var(--text-secondary);
-}
-
-.invoice-table th {
-  background: #f5faff;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.invoice-table td { border-bottom: 1px solid var(--border-color); }
-
-.total-label {
-  color: var(--text-secondary);
-  letter-spacing: 0.1em;
-}
-
-.total-border-box {
-  background: #f0f9ff;
-  border: 2px solid #c3e6fd;
-  border-radius: var(--radius-md);
-  color: #063a52;
-}
+/* --- La factura se queda COMO ANTES: papel blanco, Arial, líneas negras.
+       Sus reglas y su @media print están más arriba, sin tocar, a propósito:
+       el tema nuevo solo afecta a la aplicación, no al documento. --- */
 
 /* --- Modales, avisos y cargas --- */
 .modal-backdrop {
@@ -1712,43 +1666,5 @@ h1, h2, h3 {
   box-shadow: var(--shadow-md);
 }
 
-/* --- Impresión: la factura sale en limpio, sin adornos de pantalla --- */
-@media print {
-  body,
-  .invoice-document,
-  #invoice-print-area {
-    background: #ffffff !important;
-  }
-
-  .invoice-document {
-    border: none !important;
-    box-shadow: none !important;
-  }
-
-  .invoice-table th {
-    background: #ffffff !important;
-    color: #000000 !important;
-  }
-
-  .invoice-table th,
-  .invoice-table td {
-    border: 1px solid #000000 !important;
-  }
-
-  .total-border-box {
-    background: #ffffff !important;
-    border: 2px solid #000000 !important;
-    color: #000000 !important;
-  }
-
-  .company-title,
-  .company-owner,
-  .company-nif,
-  .company-address,
-  .company-pc,
-  .company-city,
-  .company-phone,
-  .company-email {
-    color: #000000 !important;
-  }
-}
+/* Fin del tema visual. La impresión y el documento siguen con sus reglas
+   originales, que quedan por encima de este bloque. */

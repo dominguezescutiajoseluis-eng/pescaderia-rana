@@ -2,7 +2,7 @@
    PESCADERÍA RANA - SERVICE WORKER PWA (v4: todo local + Firebase opcional)
    ========================================================================== */
 
-const CACHE_NAME = 'pescaderia-rana-v6';
+const CACHE_NAME = 'pescaderia-rana-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -28,7 +28,8 @@ const ASSETS = [
   './vendor/tesseract/tesseract.min.js',
   './vendor/tesseract/worker.min.js',
   './vendor/firebase/firebase-app-compat.js',
-  './vendor/firebase/firebase-firestore-compat.js'
+  './vendor/firebase/firebase-firestore-compat.js',
+  './vendor/firebase/firebase-auth-compat.js'
 ];
 
 self.addEventListener('install', (event) => {

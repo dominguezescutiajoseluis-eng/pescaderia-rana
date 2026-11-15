@@ -1,7 +1,8 @@
 /* ==========================================================================
    PESCADERÍA RANA - SINCRONIZACIÓN LOCAL + NUBE (Firestore)
    Los datos SIEMPRE se guardan en este equipo (IndexedDB). Si el usuario
-   configura su proyecto de Firebase, además se sincronizan con la nube:
+   conecta su proyecto de Firebase y entra con su cuenta de Google, además se
+   sincronizan con la nube, y solo esa cuenta puede leerlos o cambiarlos:
    - Subida: cada cambio local entra en una cola y se envía cuando hay red.
    - Bajada: escucha en directo (onSnapshot) y fusiona con regla
      "gana el cambio más reciente" (comparando updatedAt).
@@ -10,12 +11,17 @@
 
 const SYNC_STORE = 'sync';
 const SYNC_CONFIG_KEY = 'firebase_config_v1';
+const SYNC_SUBIDA_INICIAL_KEY = 'sync_subida_inicial_hecha';
+const SYNC_APP_NAME = 'pescaderia-rana-sync';
 
 let firebaseApp = null;
 let firestoreDB = null;
-let unsubscribeSnapshots = null;
+let authInst = null;
+let authUnsub = null;
+let syncConfig = null;
+let unsubClients = null;
+let unsubInvoices = null;
 let onlineHandler = null;
-// (unsubscribeSnapshots no se usa: hay un listener por colección)
 let syncQueueTimer = null;
 let syncEnabled = false;
 
@@ -57,50 +63,169 @@ function parseFirebaseConfig(texto) {
   return obj;
 }
 
-/** Conecta con Firebase y arranca la sincronización */
-let unsubClients = null;
-let unsubInvoices = null;
+/* -------------------------------------------------------------------------
+   Cuenta de Google
+   ------------------------------------------------------------------------- */
 
-async function connectCloudSync(config) {
+/** Pinta el estado de la sesión en la tarjeta de Configuración */
+function mostrarCuenta(user) {
+  const caja = document.getElementById('google-cuenta');
+  const sesion = document.getElementById('google-sesion');
+  const btnEntrar = document.getElementById('btn-google-signin');
+  const email = document.getElementById('google-user-email');
+  const uid = document.getElementById('google-uid');
+  const detalle = document.getElementById('sync-status-detail');
+  if (!caja) return;
+
+  caja.classList.toggle('hidden', !syncConfig);
+
+  if (user) {
+    if (sesion) sesion.classList.remove('hidden');
+    if (btnEntrar) btnEntrar.classList.add('hidden');
+    if (email) email.textContent = user.email || 'Cuenta de Google';
+    if (uid) uid.textContent = 'UID para las reglas de Firestore: ' + user.uid;
+    if (detalle) detalle.textContent = 'Conectado como ' + (user.email || 'tu cuenta de Google') + '.';
+  } else {
+    if (sesion) sesion.classList.add('hidden');
+    if (btnEntrar) btnEntrar.classList.remove('hidden');
+    if (uid) uid.textContent = '';
+    if (detalle) {
+      detalle.textContent = syncConfig
+        ? 'Entra con tu cuenta de Google: solo esa cuenta podrá leer o escribir tus facturas.'
+        : 'Sin nube configurada: los datos viven solo en este equipo (con copia de seguridad exportable).';
+    }
+  }
+}
+
+/** Traduce los errores de Google/Firebase a algo legible en el mostrador */
+function mensajeErrorGoogle(err) {
+  const codigo = err && err.code ? String(err.code) : '';
+  const mensajes = {
+    'auth/popup-closed-by-user': 'Se cerró la ventana de Google antes de terminar.',
+    'auth/cancelled-popup-request': 'Se canceló el acceso con Google.',
+    'auth/popup-blocked': 'El navegador bloqueó la ventana de Google: permite las ventanas emergentes para este sitio.',
+    'auth/unauthorized-domain': 'Este dominio no está autorizado en Firebase (Authentication → Settings → Authorized domains).',
+    'auth/operation-not-allowed': 'El acceso con Google no está activado en Firebase (Authentication → Sign-in method).',
+    'auth/network-request-failed': 'Sin conexión con Google. Inténtalo cuando vuelva la red.',
+    'auth/configuration-not-found': 'El proyecto de Firebase no tiene Authentication configurado.',
+    'auth/internal-error': 'Google devolvió un error interno. Cierra y vuelve a abrir la ventana de acceso.'
+  };
+  return mensajes[codigo] || (err && err.message) || 'No se pudo completar el acceso con Google.';
+}
+
+/** Arranca Firebase (app + auth) y deja la escucha de la sesión */
+async function iniciarFirebase(config) {
   if (typeof firebase === 'undefined') throw new Error('El SDK de Firebase no está disponible.');
-  if (firebaseApp) await disconnectCloudSync(false);
+  if (!firebase.auth) throw new Error('Falta el SDK de autenticación: recarga la página para coger la versión nueva.');
 
-  firebaseApp = firebase.initializeApp(config, 'pescaderia-rana-sync');
+  if (firebaseApp && syncConfig && config && firebaseApp.options && firebaseApp.options.projectId === config.projectId) {
+    return true; // ya arrancado con este proyecto
+  }
+
+  await cerrarFirebase();
+
+  syncConfig = config;
+  firebaseApp = firebase.initializeApp(config, SYNC_APP_NAME);
+  authInst = firebaseApp.auth();
+
+  authUnsub = authInst.onAuthStateChanged(async (user) => {
+    mostrarCuenta(user);
+    if (user) {
+      try {
+        await activarSincronizacion();
+      } catch (err) {
+        console.error('Sync:', err);
+        setSyncStatus('Error de sincronización', 'error');
+      }
+    } else {
+      detenerSincronizacion();
+      setSyncStatus('Conecta tu cuenta de Google', 'off');
+    }
+  });
+
+  mostrarCuenta(authInst.currentUser || null);
+  return true;
+}
+
+/** Acceso con la cuenta de Google (ventana o redirección si está bloqueada) */
+async function entrarConGoogle() {
+  if (!authInst) throw new Error('Primero guarda la configuración de Firebase.');
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    const res = await authInst.signInWithPopup(provider);
+    return res && res.user ? res.user : null;
+  } catch (err) {
+    if (err && (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment')) {
+      await authInst.signInWithRedirect(provider);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function salirDeGoogle() {
+  if (!authInst) return;
+  await authInst.signOut();
+  setSyncStatus('Conecta tu cuenta de Google', 'off');
+}
+
+/** Apaga listeners, app y sesión */
+async function cerrarFirebase() {
+  detenerSincronizacion();
+  if (authUnsub) { authUnsub(); authUnsub = null; }
+  authInst = null;
+  if (firebaseApp) {
+    try { await firebaseApp.delete(); } catch (e) { /* nada */ }
+  }
+  firebaseApp = null;
+  firestoreDB = null;
+  if (syncQueueTimer) { clearTimeout(syncQueueTimer); syncQueueTimer = null; }
+}
+
+/* -------------------------------------------------------------------------
+   Sincronización
+   ------------------------------------------------------------------------- */
+
+async function activarSincronizacion() {
+  if (!firebaseApp) throw new Error('Firebase no está arrancado.');
+  if (syncEnabled) return;
+  if (typeof firebase.firestore !== 'function') throw new Error('El SDK de Firestore no está disponible.');
+
   firestoreDB = firebaseApp.firestore();
   // Cola de subida local persistente (funciona sin conexión: la envía solo)
   firestoreDB.enablePersistence({ synchronizeTabs: false }).catch(() => {});
 
   syncEnabled = true;
-  if (navigator.onLine) setSyncStatus('Sincronizando con la nube…');
-  else setSyncStatus('Sin conexión: se enviará al volver la red');
+  setSyncStatus(navigator.onLine ? 'Sincronizando con la nube…' : 'Sin conexión: se enviará al volver la red');
 
   // 1) Escucha de bajada: clientes y facturas
   unsubClients = firestoreDB.collection('clients').onSnapshot(snap => {
-    procesarBajada('clients', snap);
+    procesarBajada('clients', snap).catch(err => console.warn('Sync clients:', err));
   }, err => { console.error('Sync clients:', err); setSyncStatus('Error de sincronización', 'error'); });
 
   unsubInvoices = firestoreDB.collection('invoices').onSnapshot(snap => {
-    procesarBajada('invoices', snap);
+    procesarBajada('invoices', snap).catch(err => console.warn('Sync invoices:', err));
   }, err => { console.error('Sync invoices:', err); setSyncStatus('Error de sincronización', 'error'); });
 
-  // 2) Sube lo local que aún no esté en la nube
+  // 2) Sube lo local que aún no esté en la nube (solo la primera vez por equipo)
   await subirTodo();
 
   // 3) Reintentos al recuperar la conexión
   onlineHandler = () => {
     if (syncEnabled && navigator.onLine) {
       setSyncStatus('Sincronizando con la nube…');
-      subirTodo();
+      subirCola();
     }
   };
   window.addEventListener('online', onlineHandler);
   window.addEventListener('offline', () => { if (syncEnabled) setSyncStatus('Sin conexión: se enviará al volver la red'); });
 
-  setSyncStatus('Modo Nube Activo');
-  return true;
+  const email = authInst && authInst.currentUser ? authInst.currentUser.email : 'tu cuenta';
+  setSyncStatus('Nube activa: ' + email);
 }
 
-async function disconnectCloudSync(avisar = true) {
+function detenerSincronizacion() {
   syncEnabled = false;
   if (unsubClients) { unsubClients(); unsubClients = null; }
   if (unsubInvoices) { unsubInvoices(); unsubInvoices = null; }
@@ -108,12 +233,24 @@ async function disconnectCloudSync(avisar = true) {
     window.removeEventListener('online', onlineHandler);
     onlineHandler = null;
   }
-  if (firebaseApp) {
-    try { await firebaseApp.delete(); } catch (e) { /* nada */ }
-    firebaseApp = null;
-    firestoreDB = null;
-  }
-  setSyncStatus('Modo Solo Equipo');
+  firestoreDB = null;
+}
+
+/** Alias histórico: conectar la nube ahora pasa por el login de Google */
+async function connectCloudSync(config) {
+  return iniciarFirebase(config);
+}
+
+async function disconnectCloudSync(avisar = true) {
+  await cerrarFirebase();
+  syncConfig = null;
+  await saveConfigSync(null);
+  const caja = document.getElementById('google-cuenta');
+  if (caja) caja.classList.add('hidden');
+  const btnDesconectar = document.getElementById('btn-disconnect-sync');
+  if (btnDesconectar) btnDesconectar.classList.add('hidden');
+  setSyncStatus('Modo Solo Equipo', 'off');
+  await mostrarCuenta(null);
   if (avisar) showToast('Sincronización con la nube desconectada', 'error');
 }
 
@@ -159,6 +296,11 @@ async function procesarBajada(coleccion, snap) {
     }
   }
 
+  // Lo que existe en este equipo y no en la nube se sube (por si quedó pendiente)
+  const idsNube = new Set(snap.docs.map(d => String(d.id)));
+  const locales = coleccion === 'clients' ? await getAllClients() : await getAllInvoices();
+  locales.forEach(doc => { if (!idsNube.has(String(doc.id))) marcarParaSubir(coleccion, doc.id); });
+
   if (cambios > 0) {
     console.log('Sync: ' + cambios + ' documento(s) actualizados desde la nube en ' + coleccion);
     if (coleccion === 'clients') await loadClients();
@@ -191,13 +333,20 @@ function hookDelete(coleccion, id) {
   firestoreDB.collection(coleccion).doc(String(id)).delete().catch(err => console.warn('Sync delete:', err));
 }
 
+/**
+ * Subida inicial de todo lo local. Se hace UNA vez por equipo (bandera en
+ * settings): así no se reescriben miles de documentos en cada arranque, que
+ * gastaría la cuota diaria de Firestore sin necesidad.
+ */
 async function subirTodo() {
   try {
+    if (await getSetting(SYNC_SUBIDA_INICIAL_KEY, false)) return;
     const clientes = await getAllClients();
     clientes.forEach(c => colaSubida.clients.add(c.id));
     const facturas = await getAllInvoices();
     facturas.forEach(i => colaSubida.invoices.add(i.id));
     await subirCola();
+    await saveSetting(SYNC_SUBIDA_INICIAL_KEY, true);
   } catch (err) {
     console.error('Sync inicial:', err);
   }
@@ -222,69 +371,88 @@ async function subirCola() {
       }
       colaSubida.invoices.delete(id);
     }
-    setSyncStatus('Modo Nube Activo');
+    const email = authInst && authInst.currentUser ? authInst.currentUser.email : 'tu cuenta';
+    setSyncStatus('Nube activa: ' + email);
   } catch (err) {
     console.warn('Sync: la subida se reintentará:', err.message);
     programarSubida(); // reintento suave
   }
 }
 
-/** ---- UI de Configuración ---- */
+/* -------------------------------------------------------------------------
+   UI de Configuración
+   ------------------------------------------------------------------------- */
+
 async function initSyncUI() {
   const btnConectar = document.getElementById('btn-save-firebase-cfg');
   const area = document.getElementById('cfg-firebase-config');
   if (!btnConectar) return;
 
-  // Aviso de estado
-  const estado = document.createElement('p');
-  estado.className = 'help-text';
-  estado.id = 'sync-status-detail';
-  btnConectar.parentElement.appendChild(estado);
+  const btnEntrar = document.getElementById('btn-google-signin');
+  const btnSalir = document.getElementById('btn-google-signout');
+  const btnDesconectar = document.getElementById('btn-disconnect-sync');
 
   const refrescar = async () => {
     const cfg = await getConfigSync();
     if (cfg && area && !area.value) area.value = JSON.stringify(cfg, null, 2);
-    if (cfg) {
-      estado.textContent = 'Proyecto conectado: ' + cfg.projectId + ' (los cambios se sincronizan en ambos sentidos). Botón "Desconectar" para volver a modo solo equipo.';
-      btnConectar.textContent = 'Reconectar Sincronización';
-      let btnBorrar = document.getElementById('btn-disconnect-sync');
-      if (!btnBorrar) {
-        btnBorrar = document.createElement('button');
-        btnBorrar.id = 'btn-disconnect-sync';
-        btnBorrar.className = 'btn btn-secondary margin-top-sm';
-        btnBorrar.textContent = 'Desconectar Nube';
-        btnBorrar.addEventListener('click', async () => {
-          await saveConfigSync(null);
-          await disconnectCloudSync();
-          refrescar();
-        });
-        btnConectar.parentElement.appendChild(btnBorrar);
-      }
-    } else {
-      estado.textContent = 'Sin nube configurada: los datos viven solo en este equipo (con copia de seguridad exportable).';
-      const b = document.getElementById('btn-disconnect-sync');
-      if (b) b.remove();
-      btnConectar.textContent = 'Conectar e Iniciar Sincronización';
-    }
+    const caja = document.getElementById('google-cuenta');
+    if (caja) caja.classList.toggle('hidden', !cfg);
+    if (btnDesconectar) btnDesconectar.classList.toggle('hidden', !cfg);
+    btnConectar.textContent = cfg ? 'Reconectar Sincronización' : 'Guardar configuración';
+    if (!cfg) await mostrarCuenta(null);
   };
 
   btnConectar.addEventListener('click', async () => {
     try {
       const cfg = parseFirebaseConfig(area.value);
       await saveConfigSync(cfg);
-      await connectCloudSync(cfg);
-      showToast('Nube conectada: facturas y clientes se sincronizan');
-      refrescar();
+      await iniciarFirebase(cfg);
+      await refrescar();
+      mostrarCuenta(authInst ? authInst.currentUser : null);
+      if (!authInst || !authInst.currentUser) {
+        showToast('Configuración guardada. Ahora entra con tu cuenta de Google.', 'error');
+      } else {
+        showToast('Nube conectada con ' + authInst.currentUser.email);
+      }
     } catch (err) {
-      showToast('Firebase: ' + err.message, 'error');
+      showToast('Firebase: ' + (err && err.message ? err.message : err), 'error');
     }
   });
 
-  // Restaurar conexión automática al arrancar (si hay config guardada)
+  if (btnEntrar) {
+    btnEntrar.addEventListener('click', async () => {
+      try {
+        const user = await entrarConGoogle();
+        if (user) showToast('Conectado como ' + (user.email || 'tu cuenta de Google'));
+      } catch (err) {
+        showToast('Google: ' + mensajeErrorGoogle(err), 'error');
+      }
+    });
+  }
+
+  if (btnSalir) {
+    btnSalir.addEventListener('click', async () => {
+      try {
+        await salirDeGoogle();
+        showToast('Sesión de Google cerrada', 'error');
+      } catch (err) {
+        showToast('Google: ' + mensajeErrorGoogle(err), 'error');
+      }
+    });
+  }
+
+  if (btnDesconectar) {
+    btnDesconectar.addEventListener('click', async () => {
+      await disconnectCloudSync();
+      await refrescar();
+    });
+  }
+
+  // Restaurar la conexión automática al arrancar (si hay config guardada)
   const cfg = await getConfigSync();
   if (cfg) {
     try {
-      await connectCloudSync(cfg);
+      await iniciarFirebase(cfg);
       console.log('Sync: reconectado a', cfg.projectId);
     } catch (err) {
       console.warn('Sync: no se pudo reconectar:', err.message);

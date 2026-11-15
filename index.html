@@ -28,6 +28,7 @@
   <!-- SDK de Firebase (LOCAL): solo se usa si el usuario conecta la nube -->
   <script src="vendor/firebase/firebase-app-compat.js"></script>
   <script src="vendor/firebase/firebase-firestore-compat.js"></script>
+  <script src="vendor/firebase/firebase-auth-compat.js"></script>
 </head>
 <body>
   <div id="app" class="app-container">
@@ -589,8 +590,8 @@
           </div>
 
           <div class="card">
-            <h3><i class="fa-solid fa-fire"></i> Sincronización en la Nube (Firebase)</h3>
-            <p class="help-text">Configura tu proyecto de Firebase para sincronizar automáticamente datos entre todos tus móviles y PC, además de permitir trabajo offline.</p>
+            <h3><i class="fa-solid fa-fire"></i> Sincronización en la Nube (Firebase + Google)</h3>
+            <p class="help-text">Opcional: los datos viven siempre en este equipo. Si conectas tu proyecto de Firebase y entras con tu cuenta de Google, facturas y clientes se copian a la nube y se sincronizan entre tus equipos. Solo esa cuenta puede leerlos o cambiarlos.</p>
             
             <div class="form-group">
               <label for="cfg-firebase-config">Configuración JSON de Firebase (firebaseConfig)</label>
@@ -604,8 +605,22 @@
 }'></textarea>
             </div>
             <button id="btn-save-firebase-cfg" class="btn btn-primary margin-top-md">
-              <i class="fa-solid fa-cloud-arrow-up"></i> Conectar e Iniciar Sincronización
+              <i class="fa-solid fa-cloud-arrow-up"></i> Guardar configuración
             </button>
+
+            <div id="google-cuenta" class="google-cuenta hidden">
+              <button id="btn-google-signin" class="btn btn-primary margin-top-sm full-width">
+                <i class="fa-solid fa-right-to-bracket"></i> Entrar con Google
+              </button>
+              <div id="google-sesion" class="google-sesion hidden">
+                <span id="google-user-email" class="google-user"></span>
+                <button id="btn-google-signout" class="btn btn-secondary btn-sm">Salir de Google</button>
+              </div>
+              <p id="google-uid" class="help-text"></p>
+            </div>
+
+            <p class="help-text" id="sync-status-detail">Sin nube configurada: los datos viven solo en este equipo (con copia de seguridad exportable).</p>
+            <button id="btn-disconnect-sync" class="btn btn-secondary margin-top-sm hidden">Desconectar Nube</button>
           </div>
 
           <div class="card">
